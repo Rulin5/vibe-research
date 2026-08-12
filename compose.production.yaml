@@ -1,0 +1,104 @@
+name: vibe-research
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [private]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes: ["redis_data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [private]
+
+  clamav:
+    image: clamav/clamav:1.4
+    restart: unless-stopped
+    volumes: ["clamav_data:/var/lib/clamav"]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+    networks: [private]
+
+  migrate:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    env_file: ${VR_ENV_FILE:-deploy/production.env}
+    command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
+    depends_on:
+      postgres: {condition: service_healthy}
+    networks: [private]
+    profiles: ["migration"]
+
+  api:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    restart: unless-stopped
+    env_file: ${VR_ENV_FILE:-deploy/production.env}
+    volumes: ["report_data:/data/reports"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      clamav: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8900/api/ready', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    networks: [private]
+
+  gateway:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.frontend
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    volumes: ["./deploy/certs:/etc/nginx/certs:ro"]
+    depends_on:
+      api: {condition: service_healthy}
+    networks: [private]
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=15d"]
+    volumes:
+      - ./deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      api: {condition: service_healthy}
+    networks: [private]
+
+volumes:
+  postgres_data:
+  redis_data:
+  clamav_data:
+  report_data:
+  prometheus_data:
+
+networks:
+  private:
+    driver: bridge

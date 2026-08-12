@@ -1,0 +1,77 @@
+name: vibe-research-demo
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    env_file: deploy/demo.env
+    volumes: ["demo_postgres:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    env_file: deploy/demo.env
+    command: ["sh", "-c", "redis-server --appendonly yes --requirepass $$REDIS_PASSWORD"]
+    volumes: ["demo_redis:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping | grep PONG"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  clamav:
+    image: clamav/clamav:1.4
+    restart: unless-stopped
+    volumes: ["demo_clamav:/var/lib/clamav"]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+  migrate:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    env_file: deploy/demo.env
+    command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  api:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    restart: unless-stopped
+    env_file: deploy/demo.env
+    volumes: ["demo_reports:/data/reports"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+      clamav: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8900/api/ready', timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      retries: 30
+
+  gateway:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.demo-frontend
+    restart: unless-stopped
+    ports: ["127.0.0.1:5900:80"]
+    depends_on:
+      api: {condition: service_healthy}
+
+volumes:
+  demo_postgres:
+  demo_redis:
+  demo_clamav:
+  demo_reports:

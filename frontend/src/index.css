@@ -1,0 +1,159 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 30% 97%;
+    --foreground: 222 40% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 40% 12%;
+    --primary: 15 82% 50%;
+    --primary-foreground: 0 0% 100%;
+    --accent: 25 90% 50%;
+    --accent-foreground: 0 0% 100%;
+    --muted: 210 20% 92%;
+    --muted-foreground: 215 16% 42%;
+    --destructive: 0 74% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 20% 84%;
+    --radius: 1rem;
+    --success: 145 62% 40%;
+    --danger: 0 74% 52%;
+    --warning: 38 92% 45%;
+    --info: 15 82% 50%;
+    --glass-fill-top: rgba(255, 255, 255, 0.70);
+    --glass-fill-bot: rgba(255, 255, 255, 0.35);
+    --glass-stroke: rgba(15, 40, 70, 0.10);
+    --glass-hi: rgba(255, 255, 255, 0.80);
+    --chart-grid: 214 20% 88%;
+    --chart-text: 215 16% 42%;
+    --chart-axis: 214 20% 78%;
+  }
+
+  .light {
+    --background: 210 30% 97%;
+    --foreground: 222 40% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 40% 12%;
+  }
+
+  .theme-soft {
+    --background: 215 14% 92%;
+    --foreground: 222 30% 16%;
+    --card: 210 20% 98%;
+    --card-foreground: 222 30% 16%;
+    --primary: 15 82% 48%;
+    --primary-foreground: 0 0% 100%;
+    --accent: 25 86% 48%;
+    --accent-foreground: 0 0% 100%;
+    --muted: 215 13% 86%;
+    --muted-foreground: 217 12% 40%;
+    --destructive: 0 72% 52%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 216 14% 76%;
+    --success: 145 58% 37%;
+    --danger: 0 72% 50%;
+    --warning: 38 88% 42%;
+    --info: 15 82% 48%;
+    --glass-fill-top: rgba(255, 255, 255, 0.82);
+    --glass-fill-bot: rgba(247, 248, 250, 0.66);
+    --glass-stroke: rgba(70, 82, 100, 0.16);
+    --glass-hi: rgba(255, 255, 255, 0.92);
+    --chart-grid: 215 13% 83%;
+    --chart-text: 217 12% 42%;
+    --chart-axis: 216 14% 72%;
+  }
+
+  .theme-deep {
+    --background: 224 30% 12%;
+    --foreground: 220 22% 92%;
+    --card: 223 27% 17%;
+    --card-foreground: 220 22% 92%;
+    --primary: 15 78% 60%;
+    --primary-foreground: 224 30% 12%;
+    --accent: 31 79% 61%;
+    --accent-foreground: 224 30% 12%;
+    --muted: 222 22% 23%;
+    --muted-foreground: 220 14% 66%;
+    --destructive: 0 70% 64%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 20% 29%;
+    --success: 145 48% 53%;
+    --danger: 0 70% 64%;
+    --warning: 38 82% 60%;
+    --info: 15 78% 60%;
+    --glass-fill-top: rgba(255, 255, 255, 0.07);
+    --glass-fill-bot: rgba(255, 255, 255, 0.022);
+    --glass-stroke: rgba(220, 230, 255, 0.10);
+    --glass-hi: rgba(255, 255, 255, 0.07);
+    --chart-grid: 220 18% 22%;
+    --chart-text: 220 14% 66%;
+    --chart-axis: 220 18% 31%;
+  }
+
+  * { @apply border-border; }
+
+  body {
+    @apply bg-background text-foreground;
+    background-color: hsl(var(--background));
+    background-image:
+      radial-gradient(1100px 620px at 12% -12%, hsl(15 85% 55% / 0.08), transparent 60%),
+      radial-gradient(980px 720px at 108% 112%, hsl(220 65% 60% / 0.06), transparent 55%);
+    background-attachment: fixed;
+  }
+
+  .theme-soft body {
+    background-image:
+      radial-gradient(1100px 620px at 12% -12%, hsl(15 78% 58% / 0.055), transparent 60%),
+      radial-gradient(980px 720px at 108% 112%, hsl(215 24% 60% / 0.10), transparent 55%);
+  }
+
+  .theme-deep body {
+    background-image:
+      radial-gradient(1100px 620px at 12% -12%, hsl(15 78% 60% / 0.09), transparent 60%),
+      radial-gradient(980px 720px at 108% 112%, hsl(225 50% 48% / 0.12), transparent 55%);
+  }
+
+  .prose table { border-collapse: collapse; width: 100%; }
+  .prose th, .prose td { border: 1px solid hsl(var(--border)); }
+  .prose tbody tr:nth-child(even) { background: hsl(var(--muted) / 0.3); }
+
+  ::-webkit-scrollbar { width: 7px; height: 7px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+}
+
+@layer components {
+  .glass {
+    background-image: linear-gradient(162deg, var(--glass-fill-top), var(--glass-fill-bot));
+    border: 1px solid var(--glass-stroke);
+    border-radius: var(--radius);
+    box-shadow: 0 10px 26px rgba(30, 60, 100, 0.10), inset 0 1px 0 var(--glass-hi);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+
+  .theme-deep .glass {
+    box-shadow: 0 14px 32px rgba(4, 10, 24, 0.24), inset 0 1px 0 var(--glass-hi);
+  }
+
+  .theme-soft .glass {
+    box-shadow: 0 10px 28px rgba(65, 74, 90, 0.12), inset 0 1px 0 var(--glass-hi);
+  }
+
+  .glass-glow { position: relative; overflow: hidden; }
+  .glass-glow::before {
+    content: "";
+    position: absolute;
+    top: -40%;
+    right: -20%;
+    width: 240px;
+    height: 240px;
+    background: radial-gradient(circle, hsl(var(--primary) / 0.16), transparent 70%);
+    pointer-events: none;
+  }
+
+  .text-glow { text-shadow: 0 0 18px hsl(var(--primary) / 0.45); }
+}
