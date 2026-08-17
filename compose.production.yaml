@@ -49,7 +49,32 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
     networks: [private]
-    profiles: ["migration"]
+
+  sector-bootstrap:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    env_file: ${VR_ENV_FILE:-deploy/production.env}
+    environment:
+      VR_DATA_DIR: /data/runtime
+    command: ["python", "sector_bootstrap.py"]
+    volumes: ["sector_data:/data/runtime"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    networks: [private]
+
+  public-data-bootstrap:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    env_file: ${VR_ENV_FILE:-deploy/production.env}
+    environment:
+      VR_DATA_DIR: /data/runtime
+    command: ["python", "public_data_bootstrap.py"]
+    volumes: ["sector_data:/data/runtime"]
+    depends_on:
+      sector-bootstrap: {condition: service_completed_successfully}
+    networks: [private]
 
   api:
     build:
@@ -57,9 +82,14 @@ services:
       dockerfile: deploy/Dockerfile.backend
     restart: unless-stopped
     env_file: ${VR_ENV_FILE:-deploy/production.env}
-    volumes: ["report_data:/data/reports"]
+    environment:
+      VR_DATA_DIR: /data/runtime
+      VR_REQUIRE_FRESH_SECTOR_SNAPSHOT: "true"
+    volumes: ["report_data:/data/reports", "sector_data:/data/runtime"]
     depends_on:
-      postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+      sector-bootstrap: {condition: service_completed_successfully}
+      public-data-bootstrap: {condition: service_completed_successfully}
       redis: {condition: service_healthy}
       clamav: {condition: service_healthy}
     healthcheck:
@@ -67,6 +97,36 @@ services:
       interval: 15s
       timeout: 5s
       retries: 10
+    networks: [private]
+
+  sector-scheduler:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    restart: unless-stopped
+    env_file: ${VR_ENV_FILE:-deploy/production.env}
+    environment:
+      VR_DATA_DIR: /data/runtime
+      VR_SECTOR_REFRESH_INTERVAL_SECONDS: "300"
+    command: ["python", "sector_scheduler.py"]
+    volumes: ["sector_data:/data/runtime"]
+    depends_on:
+      api: {condition: service_healthy}
+    networks: [private]
+
+  public-data-scheduler:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    restart: unless-stopped
+    env_file: ${VR_ENV_FILE:-deploy/production.env}
+    environment:
+      VR_DATA_DIR: /data/runtime
+      VR_PUBLIC_DATA_REFRESH_INTERVAL_SECONDS: "300"
+    command: ["python", "public_data_scheduler.py"]
+    volumes: ["sector_data:/data/runtime"]
+    depends_on:
+      api: {condition: service_healthy}
     networks: [private]
 
   gateway:
@@ -97,6 +157,7 @@ volumes:
   redis_data:
   clamav_data:
   report_data:
+  sector_data:
   prometheus_data:
 
 networks:

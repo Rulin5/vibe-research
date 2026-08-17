@@ -3,7 +3,11 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const SRC = new URL("../src/components/ui/AskAiButton.tsx", import.meta.url);
-const source = await readFile(SRC, "utf8");
+const askAiSource = await readFile(SRC, "utf8");
+const source = await readFile(
+  new URL("../src/components/chat/usePersistentChat.ts", import.meta.url),
+  "utf8",
+);
 
 // 这些断言锁的是 #19 的修复：对话此前只存在组件 useState 里，
 // 切页面/刷新就全丢。用户反馈「关闭 AI 就找不回之前的对话」，
@@ -19,8 +23,8 @@ test("Ask AI persists the conversation through the safe storage helper", () => {
 });
 
 test("conversations are keyed per route, not shared across pages", () => {
-  assert.match(source, /useLocation/);
-  assert.match(source, /CHAT_KEY_PREFIX\s*\+\s*pathname/);
+  assert.match(askAiSource, /useLocation/);
+  assert.match(askAiSource, /CHAT_KEY_PREFIX\s*\+\s*pathname/);
 });
 
 test("persisted history is capped so localStorage cannot be blown out", () => {
@@ -37,7 +41,7 @@ test("malformed stored data is ignored instead of crashing the panel", () => {
 
 test("there is a way to clear a stored conversation", () => {
   assert.match(source, /storageRemove/);
-  assert.match(source, /clearChat/);
+  assert.match(source, /const clear/);
 });
 
 test("emptying the conversation removes the key rather than storing an empty shell", () => {
@@ -48,13 +52,13 @@ test("key and messages are stored in one atomic state, not a ref", () => {
   // 分成 msgs + 归属 ref 是不够的：key 变化那一帧 ref 已指向新 key 而 msgs 仍是旧的
   // （setState 下一帧才生效），守卫会误放行、覆盖目标 key 已存的对话。
   assert.match(source, /useState<\{ key: string; msgs: StoredMsg\[\] \}>/);
-  assert.match(source, /if \(chat\.key !== chatKey\) return;/);
+  assert.match(source, /if \(chat\.key !== storageKey\) return;/);
   assert.doesNotMatch(source, /loadedKeyRef/);
 });
 
 test("switching keys aborts an in-flight stream", () => {
   // 否则迟到的 chunk 会被追加到目标页的对话上，且存的是用来源页上下文生成的回答。
-  const effect = source.match(/useEffect\(\(\) => \{[\s\S]*?setChat\(\{ key: chatKey[\s\S]*?\}, \[chatKey\]\);/);
+  const effect = source.match(/useEffect\(\(\) => \{[\s\S]*?setChat\(\{ key: storageKey[\s\S]*?\}, \[storageKey\]\);/);
   assert.ok(effect, "未找到 chatKey 切换的 effect");
   assert.match(effect[0], /abortRef\.current\?\.abort\(\)/);
 });
@@ -62,8 +66,8 @@ test("switching keys aborts an in-flight stream", () => {
 test("callers can scope a conversation below the route level", () => {
   // 个股页不换路由就能换标的：只按 pathname 分 key 会让 A 股票的历史
   // 作为 history 发给正在问 B 股票的模型。
-  assert.match(source, /scopeKey\?: string/);
-  assert.match(source, /CHAT_KEY_PREFIX \+ pathname \+ \(scopeKey \? `#\$\{scopeKey\}` : ""\)/);
+  assert.match(askAiSource, /scopeKey\?: string/);
+  assert.match(askAiSource, /CHAT_KEY_PREFIX \+ pathname \+ \(scopeKey \? `#\$\{scopeKey\}` : ""\)/);
 });
 
 test("the stock page actually passes a per-symbol scope", async () => {
@@ -78,11 +82,11 @@ test("the stock page actually passes a per-symbol scope", async () => {
 test("aborted-request cleanup is gated by request identity", () => {
   // 换页会中止旧请求，其 catch 可能在用户已于新页面发起提问后才落地。
   // 不校验就会删掉新请求的空气泡，后续 chunk 无处可写、对话残缺。
-  const block = source.match(/\} catch \(e\) \{[\s\S]*?\} finally \{/);
+  const block = source.match(/\} catch \([^)]*\) \{[\s\S]*?\} finally \{/);
   assert.ok(block, "未找到 catch 块");
   // 不能简单用 abortRef.current === ac：close() 会把它置 null，
   // 那种情况下空气泡**仍要清理**，否则会被持久化成一条空回复。
-  assert.match(block[0], /const superseded = abortRef\.current !== null && abortRef\.current !== ac;/);
+  assert.match(block[0], /const superseded = abortRef\.current !== null && abortRef\.current !== controller;/);
   assert.match(block[0], /if \(!superseded && chatKeyRef\.current === startedKey\)/);
 });
 
@@ -91,10 +95,10 @@ test("streaming replies are partial from creation and only cleared on success", 
   // 流到一半换页/换标的，存下来的就是一条被当作完整回答的残句，
   // 回到该对话时还会以完整发言的身份进入下一轮 history。
   assert.match(source, /partial\?: boolean/);
-  assert.match(source, /role: "assistant", content: "", tools: \[\], partial: true/); // 创建即标
-  assert.match(source, /const \{ partial: _drop, \.\.\.rest \} = msg;/);            // 成功才摘
+  assert.match(source, /role: "assistant", content: "", tools: \[\], partial: true, status: "streaming"/); // 创建即标
+  assert.match(source, /const \{ partial: _drop, \.\.\.rest \} = message;/);        // 成功才摘
   assert.match(source, /const keep = completeTurns\(msgs\)/);                        // 不落盘
-  assert.match(source, /completeTurns\(msgs\)\.map/);                                // 不进 history
+  assert.match(source, /buildModelHistory\(chat\.msgs\)/);                        // 不进 history
 });
 
 test("an interrupted turn drops the question too, not just the half answer", () => {
@@ -107,8 +111,8 @@ test("an interrupted turn drops the question too, not just the half answer", () 
 test("a request that fails before any content removes its question too", () => {
   // 对称情况：一个字都没收到时删空气泡，若不连提问一起删，
   // 界面和存储里都会留下孤立的 user turn，下一轮就是连续两条 user。
-  const block = source.match(/\} catch \(e\) \{[\s\S]*?\} finally \{/);
+  const block = source.match(/\} catch \([^)]*\) \{[\s\S]*?\} finally \{/);
   assert.ok(block, "未找到 catch 块");
-  assert.match(block[0], /const dropUser = m\[m\.length - 2\]\?\.role === "user";/);
-  assert.match(block[0], /m\.slice\(0, dropUser \? -2 : -1\)/);
+  assert.match(block[0], /const dropUser = messages\[messages\.length - 2\]\?\.role === "user";/);
+  assert.match(block[0], /messages\.slice\(0, dropUser \? -2 : -1\)/);
 });

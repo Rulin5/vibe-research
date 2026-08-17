@@ -7,6 +7,7 @@ const router = readFileSync("src/router.tsx", "utf8");
 const provider = readFileSync("src/components/auth/AuthProvider.tsx", "utf8");
 const api = readFileSync("src/lib/api.ts", "utf8");
 const settings = readFileSync("src/pages/Settings.tsx", "utf8");
+const layout = readFileSync("src/components/layout/Layout.tsx", "utf8");
 
 test("auth provider obtains the authenticated user from the server session", () => {
   assert.match(provider, /api\.authMe\(\)/);
@@ -32,4 +33,12 @@ test("AI settings keep the original API model selector and save only on explicit
   assert.match(settings, /PROVIDER_BASE/);
   assert.match(settings, /saveAiCredential/);
   assert.doesNotMatch(settings, /localStorage/);
+});
+
+test("sidebar shows the signed-in account and switches safely through server logout", () => {
+  assert.match(layout, /useAuth\(\)/);
+  assert.match(layout, /user\?\.username/);
+  assert.match(layout, /logout\(\)/);
+  assert.match(layout, /navigate\("\/login"/);
+  assert.match(layout, /切换账号/);
 });

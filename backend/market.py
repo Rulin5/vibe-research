@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 import threading
 from collections import Counter
@@ -13,19 +14,21 @@ from datetime import datetime, timezone, timedelta
 
 import astock
 import gstock
+import index_market
 
 BEIJING = timezone(timedelta(hours=8))
 _CACHE: dict = {}
-_TTL = 300  # 5 分钟；全站共享，省数据源压力
+_TTL = 300  # closed-market default; active market uses _LIVE_TTL below
+_LIVE_TTL = 30
 _CACHE_LOCK = threading.RLock()
 
 
-def _cached(key: str, fn, valid=bool):
+def _cached(key: str, fn, valid=bool, *, ttl: int | None = None):
     """TTL 缓存。数据源故障的空结果不缓存（valid 判否），下次请求直接重试。"""
     with _CACHE_LOCK:
         now = time.time()
         hit = _CACHE.get(key)
-        if hit and now - hit[0] < _TTL:
+        if hit and now - hit[0] < (ttl if ttl is not None else _TTL):
             return hit[1]
         val = fn()
         if valid(val):
@@ -40,6 +43,29 @@ def _num(v) -> int:
         return 0
 
 
+def _required_num(values: dict, key: str) -> int | None:
+    value = values.get(key)
+    if value in (None, ""):
+        return None
+    try:
+        number = int(float(value))
+    except (ValueError, TypeError):
+        return None
+    return number if number >= 0 else None
+
+
+def _finite_number(value) -> float | None:
+    try:
+        number = float(value)
+    except (ValueError, TypeError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _market_ttl() -> int:
+    return _LIVE_TTL if index_market._cn_market_session() == "trading" else _TTL
+
+
 def _sentiment() -> dict:
     """市场情绪：涨跌家数/涨停跌停/活跃度 + 大盘宽度、题材投机（客观数据机械分档）。"""
     try:
@@ -48,9 +74,11 @@ def _sentiment() -> dict:
         d = {row["item"]: row["value"] for _, row in df.iterrows()}
     except Exception:
         return {}
-    up, down, flat = _num(d.get("上涨")), _num(d.get("下跌")), _num(d.get("平盘"))
-    zt, zt_real = _num(d.get("涨停")), _num(d.get("真实涨停"))
-    dt, dt_real = _num(d.get("跌停")), _num(d.get("真实跌停"))
+    up, down, flat = (_required_num(d, key) for key in ("上涨", "下跌", "平盘"))
+    zt, zt_real = (_required_num(d, key) for key in ("涨停", "真实涨停"))
+    dt, dt_real = (_required_num(d, key) for key in ("跌停", "真实跌停"))
+    if any(value is None for value in (up, down, flat, zt, zt_real, dt, dt_real)):
+        return {}
     r = up / max(down, 1)
     if up < 600:
         breadth = "冰点"
@@ -81,13 +109,23 @@ def _sectors() -> list[dict]:
         return []
     out = []
     for _, row in f.iterrows():
+        name = str(row.get("行业") or "").strip()
+        pct = _finite_number(row.get("行业-涨跌幅"))
+        net = _finite_number(row.get("净额"))
+        inflow = _finite_number(row.get("流入资金"))
+        outflow = _finite_number(row.get("流出资金"))
+        firms = _required_num(dict(row), "公司家数")
+        if not name or any(value is None for value in (pct, net, inflow, outflow, firms)):
+            continue
+        # Provider values are in 100m CNY. A mismatch means a partial or
+        # malformed upstream row; excluding it is safer than displaying a
+        # fabricated net inflow.
+        if abs((inflow - outflow) - net) > 0.02:
+            continue
         out.append({
-            "name": str(row["行业"]),
-            "pct": round(float(row.get("行业-涨跌幅", 0) or 0), 2),
-            "net": round(float(row.get("净额", 0) or 0), 2),
-            "inflow": round(float(row.get("流入资金", 0) or 0), 2),
-            "outflow": round(float(row.get("流出资金", 0) or 0), 2),
-            "firms": _num(row.get("公司家数")),
+            "name": name, "pct": round(pct, 2), "net": round(net, 2),
+            "inflow": round(inflow, 2), "outflow": round(outflow, 2), "firms": firms,
+            "amount_unit": "100m_CNY",
         })
     return out
 
@@ -100,7 +138,7 @@ def get_overview() -> dict:
             "sectors": _sectors(),
             "updated": datetime.now(BEIJING).strftime("%Y-%m-%d %H:%M"),
         }
-    return _cached("overview", build, valid=lambda v: bool(v.get("sentiment") or v.get("sectors")))
+    return _cached("overview", build, valid=lambda v: bool(v.get("sentiment") and v.get("sectors")), ttl=_market_ttl())
 
 
 def _emotion() -> dict:
@@ -171,7 +209,7 @@ def _emotion() -> dict:
 
 def get_short_term_emotion() -> dict:
     """短线情绪（含缓存，5 分钟）。"""
-    return _cached("emotion", _emotion)
+    return _cached("emotion", _emotion, ttl=_market_ttl())
 
 
 def get_turnover_top() -> dict:
@@ -181,7 +219,7 @@ def get_turnover_top() -> dict:
             "stocks": astock.market_turnover_rank(20),
             "updated": datetime.now(BEIJING).strftime("%Y-%m-%d %H:%M"),
         }
-    return _cached("turnover_top", build, valid=lambda v: bool(v.get("stocks")))
+    return _cached("turnover_top", build, valid=lambda v: bool(v.get("stocks")), ttl=_market_ttl())
 
 
 def get_global_indices() -> list[dict]:

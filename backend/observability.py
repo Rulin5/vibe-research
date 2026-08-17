@@ -9,10 +9,12 @@ import time
 import uuid
 
 from fastapi import Request, Response
+from sqlalchemy.exc import SQLAlchemyError
 
 
 _SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _LOGGER = logging.getLogger("vibe_research.http")
+_ERROR_LOGGER = logging.getLogger("vibe_research.error")
 
 
 def _request_id(request: Request) -> str:
@@ -46,3 +48,30 @@ async def request_observability_middleware(request: Request, call_next) -> Respo
                 separators=(",", ":"),
             )
         )
+
+
+async def dependency_error_middleware(request: Request, call_next) -> Response:
+    """Expose expected infrastructure failures as retryable, traceable API responses."""
+    try:
+        return await call_next(request)
+    except SQLAlchemyError:
+        _ERROR_LOGGER.exception(
+            "database_dependency_failure request_id=%s method=%s path=%s",
+            getattr(request.state, "request_id", None),
+            request.method,
+            request.url.path,
+        )
+        return Response(
+            content='{"detail":"数据库服务暂不可用"}',
+            status_code=503,
+            media_type="application/json",
+            headers={"X-Request-ID": getattr(request.state, "request_id", "")},
+        )
+    except Exception:
+        _ERROR_LOGGER.exception(
+            "unhandled_request_failure request_id=%s method=%s path=%s",
+            getattr(request.state, "request_id", None),
+            request.method,
+            request.url.path,
+        )
+        raise

@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import teajoin
+import teajoin_data
 
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
@@ -196,10 +197,8 @@ def _akshare():
 
 
 def profit_forecast(code: str) -> list[dict]:
-    """机构一致预期 EPS（同花顺）。"""
-    ak = _akshare()
-    df = ak.stock_profit_forecast_ths(symbol=code, indicator="预测年报每股收益")
-    return df.to_dict("records") if df is not None and not df.empty else []
+    """机构一致预期 EPS（TeaJoin/Tushare report_rc）。"""
+    return teajoin_data.profit_forecast(code)
 
 
 def stock_news(code: str, limit: int = 20) -> list[dict]:
@@ -210,12 +209,8 @@ def stock_news(code: str, limit: int = 20) -> list[dict]:
 
 
 def individual_info(code: str) -> dict:
-    """个股基本面（东财）：行业 / 总股本 / 上市时间等。"""
-    ak = _akshare()
-    df = ak.stock_individual_info_em(symbol=code)
-    if df is None or df.empty:
-        return {}
-    return {str(row["item"]): row["value"] for _, row in df.iterrows()}
+    """个股基本面（TeaJoin/Tushare stock_basic）。"""
+    return teajoin_data.stock_profile(code)
 
 
 def disclosure(code: str) -> list[dict]:
@@ -263,10 +258,8 @@ def _mootdx_client():
 
 
 def kline(code: str, category: int = 4, offset: int = 60) -> list[dict]:
-    """K线：category 4=日 5=周 6=月 11=60分钟。"""
-    client = _mootdx_client()
-    df = client.bars(symbol=code, category=category, offset=offset)
-    return df.to_dict("records") if df is not None and not df.empty else []
+    """K线：TeaJoin 日/周/月线；通用套餐不伪装成分钟实时行情。"""
+    return teajoin_data.kline(code, category=category, offset=offset)
 
 
 def finance(code: str) -> dict:
@@ -297,28 +290,8 @@ def pe_digestion(current_pe: float, cagr: float, target_pe: float = 30) -> float
 
 
 def financials(code: str) -> dict:
-    """财务关键指标（同花顺财务摘要，最新报告期）—— 干净可靠的营收/净利/ROE/毛利率等。
-
-    注：mootdx finance() 的营收/净利数值不可靠(实测放大数倍)，故财务摘要走此源。
-    """
-    ak = _akshare()
-    df = ak.stock_financial_abstract_ths(symbol=code, indicator="按报告期")
-    if df is None or df.empty:
-        return {}
-    row = df.iloc[-1].to_dict()  # 最新报告期（按报告期升序，取末行）
-
-    def g(k):
-        v = row.get(k)
-        return None if v in (False, "false", "", None) else v
-
-    return {
-        "period": g("报告期"),
-        "revenue": g("营业总收入"), "revenue_yoy": g("营业总收入同比增长率"),
-        "net_profit": g("净利润"), "net_profit_yoy": g("净利润同比增长率"),
-        "eps": g("基本每股收益"), "bvps": g("每股净资产"),
-        "roe": g("净资产收益率"), "gross_margin": g("销售毛利率"), "net_margin": g("销售净利率"),
-        "op_cf_ps": g("每股经营现金流"),
-    }
+    """TeaJoin 财务指标与利润表合并后的最新报告期摘要。"""
+    return teajoin_data.financials(code)
 
 
 def valuation_percentile(code: str, period: str = "近五年") -> dict:
@@ -326,38 +299,7 @@ def valuation_percentile(code: str, period: str = "近五年") -> dict:
 
     只表达"处于历史什么位置"，不划买卖线（理杏仁式中立呈现）。
     """
-    ak = _akshare()
-
-    def _q(vals: list, p: float) -> float:
-        if not vals:
-            return 0.0
-        idx = p * (len(vals) - 1)
-        lo = int(idx)
-        if lo + 1 >= len(vals):
-            return vals[-1]
-        frac = idx - lo
-        return vals[lo] * (1 - frac) + vals[lo + 1] * frac
-
-    metrics = {}
-    for key, ind in (("pe_ttm", "市盈率(TTM)"), ("pb", "市净率")):
-        try:
-            df = ak.stock_zh_valuation_baidu(symbol=code, indicator=ind, period=period)
-            raw = df.iloc[:, 1].dropna().astype(float).tolist()
-            if not raw:
-                continue
-            cur = float(raw[-1])
-            s = sorted(raw)
-            below = sum(1 for x in s if x < cur)
-            metrics[key] = {
-                "current": round(cur, 2),
-                "percentile": round(below / max(len(s) - 1, 1) * 100, 1),
-                "min": round(s[0], 2), "max": round(s[-1], 2),
-                "p20": round(_q(s, 0.2), 2), "p50": round(_q(s, 0.5), 2), "p80": round(_q(s, 0.8), 2),
-                "n": len(s),
-            }
-        except Exception:
-            continue
-    return {"period": "近5年", "metrics": metrics}
+    return teajoin_data.valuation_percentile(code, years=5)
 
 
 def full_valuation(code: str) -> dict:
@@ -569,142 +511,32 @@ def eastmoney_datacenter(report_name: str, columns: str = "ALL", filter_str: str
 
 def margin_trading(code: str, page_size: int = 30) -> list[dict]:
     """融资融券明细（日级）：融资余额 / 融资买入 / 融券余额 / 两融合计。"""
-    data = eastmoney_datacenter(
-        "RPTA_WEB_RZRQ_GGMX", filter_str=f'(SCODE="{code}")',
-        page_size=page_size, sort_columns="DATE", sort_types="-1")
-    return [{
-        "date": str(r.get("DATE", ""))[:10],
-        "rzye": r.get("RZYE", 0), "rzmre": r.get("RZMRE", 0), "rzche": r.get("RZCHE", 0),
-        "rqye": r.get("RQYE", 0), "rqmcl": r.get("RQMCL", 0),
-        "rzrqye": r.get("RZRQYE", 0),
-    } for r in data]
+    return teajoin_data.margin_trading(code, page_size)
 
 
 def block_trade(code: str, page_size: int = 20) -> list[dict]:
     """大宗交易：成交价 / 折溢价率 / 量 / 买卖方营业部。"""
-    data = eastmoney_datacenter(
-        "RPT_DATA_BLOCKTRADE", filter_str=f'(SECURITY_CODE="{code}")',
-        page_size=page_size, sort_columns="TRADE_DATE", sort_types="-1")
-    rows = []
-    for r in data:
-        close = r.get("CLOSE_PRICE") or 0
-        deal = r.get("DEAL_PRICE") or 0
-        rows.append({
-            "date": str(r.get("TRADE_DATE", ""))[:10],
-            "price": deal, "close": close,
-            "premium_pct": round((deal / close - 1) * 100, 2) if close else 0,
-            "vol": r.get("DEAL_VOLUME", 0), "amount": r.get("DEAL_AMT", 0),
-            "buyer": r.get("BUYER_NAME", ""), "seller": r.get("SELLER_NAME", ""),
-        })
-    return rows
+    return teajoin_data.block_trade(code, page_size)
 
 
 def holder_num_change(code: str, page_size: int = 10) -> list[dict]:
     """股东户数变化（季度级）：户数 / 环比 / 户均持股。持续减少 = 筹码集中。"""
-    data = eastmoney_datacenter(
-        "RPT_HOLDERNUMLATEST", filter_str=f'(SECURITY_CODE="{code}")',
-        page_size=page_size, sort_columns="END_DATE", sort_types="-1")
-    return [{
-        "date": str(r.get("END_DATE", ""))[:10],
-        "holder_num": r.get("HOLDER_NUM", 0),
-        "change_ratio": r.get("HOLDER_NUM_RATIO", 0),
-        "avg_shares": r.get("AVG_FREE_SHARES", 0),
-    } for r in data]
+    return teajoin_data.holder_num_change(code, page_size)
 
 
 def dividend_history(code: str, page_size: int = 20) -> list[dict]:
     """分红送转历史：每股派息（税前）/ 每10股转增 / 每10股送股 / 进度。"""
-    data = eastmoney_datacenter(
-        "RPT_SHAREBONUS_DET", filter_str=f'(SECURITY_CODE="{code}")',
-        page_size=page_size, sort_columns="EX_DIVIDEND_DATE", sort_types="-1")
-    return [{
-        "date": str(r.get("EX_DIVIDEND_DATE", ""))[:10],
-        "bonus_rmb": r.get("PRETAX_BONUS_RMB", 0),
-        "transfer_ratio": r.get("TRANSFER_RATIO", 0),
-        "bonus_ratio": r.get("BONUS_RATIO", 0),
-        "plan": r.get("ASSIGN_PROGRESS", ""),
-    } for r in data]
+    return teajoin_data.dividend_history(code, page_size)
 
 
 def stock_fund_flow_120d(code: str) -> list[dict]:
     """个股资金流（日级，最近 120 交易日）：主力 / 小单 / 中单 / 大单 / 超大单净流入（元）。"""
-    market_code = 1 if code.startswith("6") else 0
-    params = {
-        "secid": f"{market_code}.{code}",
-        "fields1": "f1,f2,f3,f7",
-        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65",
-        "lmt": "120",
-    }
-    headers = {"User-Agent": UA, "Referer": "https://quote.eastmoney.com/", "Origin": "https://quote.eastmoney.com"}
-    try:
-        d = em_get("https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get",
-                   params=params, headers=headers, timeout=15).json()
-    except Exception:
-        return []
-    rows = []
-    for line in d.get("data", {}).get("klines", []):
-        p = line.split(",")
-        if len(p) >= 6:
-            def _f(x):
-                try:
-                    return float(x) if x not in ("-", "") else 0.0
-                except ValueError:
-                    return 0.0
-            rows.append({
-                "date": p[0], "main_net": _f(p[1]), "small_net": _f(p[2]),
-                "mid_net": _f(p[3]), "large_net": _f(p[4]), "super_net": _f(p[5]),
-            })
-    return rows
+    return teajoin_data.fund_flow(code, 120)
 
 
 def dragon_tiger_board(code: str, trade_date: str | None = None, look_back: int = 30) -> dict:
     """龙虎榜：该股近期上榜记录 + 最近一次买卖席位 TOP5 + 机构专用席位净买。"""
-    trade_date = trade_date or datetime.now().strftime("%Y-%m-%d")
-    start = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=look_back)).strftime("%Y-%m-%d")
-    records = []
-    data = eastmoney_datacenter(
-        "RPT_DAILYBILLBOARD_DETAILSNEW",
-        filter_str=f'(TRADE_DATE>=\'{start}\')(TRADE_DATE<=\'{trade_date}\')(SECURITY_CODE="{code}")',
-        page_size=50, sort_columns="TRADE_DATE", sort_types="-1")
-    for r in data:
-        records.append({
-            "date": str(r.get("TRADE_DATE", ""))[:10],
-            "reason": r.get("EXPLANATION", ""),
-            "net_buy": round((r.get("BILLBOARD_NET_AMT") or 0) / 10000, 1),  # 万元
-            "turnover": round(float(r.get("TURNOVERRATE") or 0), 2),
-        })
-
-    seats = {"buy": [], "sell": []}
-    institution = {"buy_amt": 0.0, "sell_amt": 0.0, "net_amt": 0.0}
-    if records:
-        latest = records[0]["date"]
-        buy_data = eastmoney_datacenter(
-            "RPT_BILLBOARD_DAILYDETAILSBUY",
-            filter_str=f'(TRADE_DATE=\'{latest}\')(SECURITY_CODE="{code}")',
-            page_size=10, sort_columns="BUY", sort_types="-1")
-        sell_data = eastmoney_datacenter(
-            "RPT_BILLBOARD_DAILYDETAILSSELL",
-            filter_str=f'(TRADE_DATE=\'{latest}\')(SECURITY_CODE="{code}")',
-            page_size=10, sort_columns="SELL", sort_types="-1")
-        for r in buy_data[:5]:
-            seats["buy"].append({"name": r.get("OPERATEDEPT_NAME", ""),
-                                 "buy_amt": round((r.get("BUY") or 0) / 10000, 1),
-                                 "sell_amt": round((r.get("SELL") or 0) / 10000, 1),
-                                 "net": round((r.get("NET") or 0) / 10000, 1)})
-        for r in sell_data[:5]:
-            seats["sell"].append({"name": r.get("OPERATEDEPT_NAME", ""),
-                                  "buy_amt": round((r.get("BUY") or 0) / 10000, 1),
-                                  "sell_amt": round((r.get("SELL") or 0) / 10000, 1),
-                                  "net": round((r.get("NET") or 0) / 10000, 1)})
-        for detail, side in ((buy_data, "buy"), (sell_data, "sell")):
-            for r in detail:
-                if str(r.get("OPERATEDEPT_CODE", "")) == "0":  # 机构专用席位
-                    amt = (r.get("BUY") or 0) if side == "buy" else (r.get("SELL") or 0)
-                    institution[f"{side}_amt"] += amt
-        institution["buy_amt"] = round(institution["buy_amt"] / 10000, 1)
-        institution["sell_amt"] = round(institution["sell_amt"] / 10000, 1)
-        institution["net_amt"] = round(institution["buy_amt"] - institution["sell_amt"], 1)
-    return {"records": records, "seats": seats, "institution": institution}
+    return teajoin_data.dragon_tiger(code, trade_date, look_back)
 
 
 def lockup_expiry(code: str, trade_date: str | None = None, forward_days: int = 90) -> dict:
@@ -713,25 +545,7 @@ def lockup_expiry(code: str, trade_date: str | None = None, forward_days: int = 
     字段随东财 2026 改列名同步（a-stock-data §3.6）：旧 LIMITED_STOCK_TYPE/FREE_SHARES_NUM
     已废、致 type/shares 恒空 → 改 FREE_SHARES_TYPE/FREE_SHARES，并补 able_shares（实际可流通股数）。
     """
-    trade_date = trade_date or datetime.now().strftime("%Y-%m-%d")
-    history = [{
-        "date": str(r.get("FREE_DATE", ""))[:10], "type": r.get("FREE_SHARES_TYPE", ""),
-        "shares": r.get("FREE_SHARES", 0), "able_shares": r.get("ABLE_FREE_SHARES", 0),
-        "ratio": r.get("FREE_RATIO", 0),
-    } for r in eastmoney_datacenter(
-        "RPT_LIFT_STAGE", filter_str=f'(SECURITY_CODE="{code}")',
-        page_size=15, sort_columns="FREE_DATE", sort_types="-1")]
-
-    end = (datetime.strptime(trade_date, "%Y-%m-%d") + timedelta(days=forward_days)).strftime("%Y-%m-%d")
-    upcoming = [{
-        "date": str(r.get("FREE_DATE", ""))[:10], "type": r.get("FREE_SHARES_TYPE", ""),
-        "shares": r.get("FREE_SHARES", 0), "able_shares": r.get("ABLE_FREE_SHARES", 0),
-        "ratio": r.get("FREE_RATIO", 0),
-    } for r in eastmoney_datacenter(
-        "RPT_LIFT_STAGE",
-        filter_str=f'(SECURITY_CODE="{code}")(FREE_DATE>=\'{trade_date}\')(FREE_DATE<=\'{end}\')',
-        page_size=20, sort_columns="FREE_DATE", sort_types="1")]
-    return {"history": history, "upcoming": upcoming}
+    return teajoin_data.lockup_expiry(code, trade_date, forward_days)
 
 
 def concept_blocks(code: str) -> dict:
@@ -938,7 +752,7 @@ def _integer(value: object) -> int:
 
 
 _SECTOR_TIMEZONE = timezone(timedelta(hours=8))
-_SECTOR_METHOD_VERSION = "ths-verified-snapshot-v1"
+_SECTOR_METHOD_VERSION = "ths-verified-snapshot-v2"
 
 
 def _normalized_daily_sector(row: dict, kind: str, trade_date: str, source_api: str) -> dict | None:
@@ -997,7 +811,10 @@ def _verified_ths_members(code: str, trade_date: str) -> list[dict]:
     return result
 
 
-def build_verified_sector_snapshot(trade_date: str) -> tuple[dict, dict[tuple[str, str], list[dict]]]:
+def build_verified_sector_snapshot(
+    trade_date: str,
+    reusable_members: dict[tuple[str, str], list[dict]] | None = None,
+) -> tuple[dict, dict[tuple[str, str], list[dict]]]:
     """构建一个交易日内字段和成分股均可验证的 THS 板块快照，供异步刷新任务发布。"""
     industry_rows = teajoin.call("moneyflow_ind_ths", {"trade_date": trade_date})
     concept_rows = teajoin.call("moneyflow_cnt_ths", {"trade_date": trade_date})
@@ -1014,24 +831,39 @@ def build_verified_sector_snapshot(trade_date: str) -> tuple[dict, dict[tuple[st
             else:
                 candidates.append(normalized)
 
+    reusable_members = reusable_members or {}
     members: dict[tuple[str, str], list[dict]] = {}
     public_rows: list[dict] = []
+    member_count_mismatch_count = 0
+    reused_member_sector_count = 0
     for row in candidates:
-        normalized_members = _verified_ths_members(row["code"], trade_date)
+        key = (row["kind"], row["code"])
+        normalized_members = reusable_members.get(key)
+        if normalized_members:
+            reused_member_sector_count += 1
+        else:
+            normalized_members = _verified_ths_members(row["code"], trade_date)
         if not normalized_members:
             excluded["empty_members"] = excluded.get("empty_members", 0) + 1
             continue
-        if len(normalized_members) != row["member_count"]:
-            excluded["member_count_mismatch"] = excluded.get("member_count_mismatch", 0) + 1
-            continue
-        members[(row["kind"], row["code"])] = normalized_members
-        public_rows.append(row)
+        provider_member_count = row["member_count"]
+        actual_member_count = len(normalized_members)
+        if actual_member_count != provider_member_count:
+            member_count_mismatch_count += 1
+        members[key] = normalized_members
+        public_rows.append({
+            **row,
+            "member_count": actual_member_count,
+            "provider_member_count": provider_member_count,
+        })
 
     retrieved_at = datetime.now(_SECTOR_TIMEZONE).isoformat(timespec="seconds")
     snapshot_id = f"{trade_date}-{int(datetime.now(_SECTOR_TIMEZONE).timestamp())}-{_SECTOR_METHOD_VERSION}"
     completeness = {
         "candidate_count": len(candidates), "published_count": len(public_rows),
         "excluded_count": sum(excluded.values()), "excluded_by_reason": excluded,
+        "member_count_mismatch_count": member_count_mismatch_count,
+        "reused_member_sector_count": reused_member_sector_count,
         "provider_row_counts": {"moneyflow_ind_ths": len(industry_rows), "moneyflow_cnt_ths": len(concept_rows)},
     }
     if completeness["candidate_count"] != completeness["published_count"] + completeness["excluded_count"]:

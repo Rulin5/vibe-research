@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,50 @@ class SectorSnapshotStore:
         with self._lock:
             return self._read_json(self._path("refresh-state.json"))
 
+    def try_acquire_refresh_lock(self, stale_after_seconds: int = 1800) -> Path | None:
+        """Acquire a filesystem lock shared by API and scheduler containers."""
+        lock_path = self._path("refresh.lock")
+        with self._lock:
+            self.root.mkdir(parents=True, exist_ok=True)
+            try:
+                descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                try:
+                    age_seconds = time.time() - lock_path.stat().st_mtime
+                    owner_text = lock_path.read_text(encoding="utf-8").strip()
+                    owner_pid = int(owner_text)
+                    try:
+                        os.kill(owner_pid, 0)
+                        owner_is_dead = False
+                    except ProcessLookupError:
+                        owner_is_dead = True
+                    except PermissionError:
+                        owner_is_dead = False
+                    is_stale = age_seconds > stale_after_seconds or owner_is_dead
+                except OSError:
+                    return None
+                except ValueError:
+                    is_stale = True
+                if not is_stale:
+                    return None
+                try:
+                    lock_path.unlink()
+                    descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                except (FileExistsError, OSError):
+                    return None
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(str(os.getpid()))
+                handle.flush()
+                os.fsync(handle.fileno())
+            return lock_path
+
+    def release_refresh_lock(self, lock_path: Path) -> None:
+        with self._lock:
+            try:
+                lock_path.unlink()
+            except FileNotFoundError:
+                pass
+
     def publish(self, snapshot: dict, members: dict[tuple[str, str], list[dict]] | None = None) -> None:
         snapshot_id = str(snapshot.get("snapshot_id") or "").strip()
         if not snapshot_id or snapshot.get("status") != "completed":
@@ -67,3 +112,14 @@ class SectorSnapshotStore:
             payload = self._read_json(self._path(f"{snapshot_id}-members.json")) or {}
             rows = payload.get(f"{kind}|{code}")
             return rows if isinstance(rows, list) else []
+
+    def load_all_members(self, snapshot_id: str) -> dict[tuple[str, str], list[dict]]:
+        """Load a verified member map for same-trade-date refresh reuse."""
+        with self._lock:
+            payload = self._read_json(self._path(f"{snapshot_id}-members.json")) or {}
+        result: dict[tuple[str, str], list[dict]] = {}
+        for compound_key, rows in payload.items():
+            kind, separator, code = str(compound_key).partition("|")
+            if separator and kind and code and isinstance(rows, list) and rows:
+                result[(kind, code)] = rows
+        return result

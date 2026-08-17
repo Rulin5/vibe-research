@@ -26,6 +26,7 @@ deploy/evidence/
 
 # ── 依赖 / 构建产物 ───────────────────────────────────────────────
 **/.venv/
+**/.venv-local/
 **/node_modules/
 **/__pycache__/
 **/.pytest_cache/
@@ -38,5 +39,6 @@ frontend/tsconfig.tsbuildinfo
 **/.claude/
 .DS_Store
 *.log
+.local-runtime/
 .vscode/
 .idea/

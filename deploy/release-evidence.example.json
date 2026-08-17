@@ -1,9 +1,9 @@
 {
-  "tls": {"approved": false, "evidence_file": "evidence/tls.txt"},
-  "image_build": {"approved": false, "evidence_file": "evidence/image-build.txt"},
-  "eicar_rejection": {"approved": false, "evidence_file": "evidence/eicar-rejection.txt"},
-  "restore_drill": {"approved": false, "evidence_file": "evidence/restore-drill.json"},
-  "data_provider_authorization": {"approved": false, "evidence_file": "evidence/provider-authorization.txt"},
-  "security_signoff": {"approved": false, "evidence_file": "evidence/security-signoff.txt"},
-  "privacy_financial_disclosures": {"approved": false, "evidence_file": "evidence/privacy-financial-review.txt"}
+  "tls": {"approved": false, "approved_by": "", "approved_at": "", "evidence_file": "evidence/tls.txt"},
+  "image_build": {"approved": false, "approved_by": "", "approved_at": "", "evidence_file": "evidence/image-build.txt"},
+  "eicar_rejection": {"approved": false, "approved_by": "", "approved_at": "", "evidence_file": "evidence/eicar-rejection.txt"},
+  "restore_drill": {"approved": false, "approved_by": "", "approved_at": "", "evidence_file": "evidence/restore-drill.json"},
+  "data_provider_authorization": {"approved": false, "approved_by": "", "approved_at": "", "evidence_file": "evidence/provider-authorization.txt"},
+  "security_signoff": {"approved": false, "approved_by": "", "approved_at": "", "evidence_file": "evidence/security-signoff.txt"},
+  "privacy_financial_disclosures": {"approved": false, "approved_by": "", "approved_at": "", "evidence_file": "evidence/privacy-financial-review.txt"}
 }

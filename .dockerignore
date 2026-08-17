@@ -11,5 +11,8 @@ frontend/dist
 *.pem
 *.key
 deploy/certs
+deploy/production.env
+deploy/demo.env
+deploy/evidence
 public/user-data
 **/.cache

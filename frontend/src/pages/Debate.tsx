@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Swords, Play, Square, Save, CheckCircle2, Circle, AlertTriangle } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -29,7 +30,8 @@ const STAGE_TONE: Record<DebateStage, string> = {
 const DOSSIER_HINT = "多空双方拿到的是同一份接口实时拉取的数据，谁也不能靠编数字赢。";
 
 export function Debate() {
-  const [code, setCode] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const code = (searchParams.get("code") || "").trim();
   const [selectedStock, setSelectedStock] = useState<StockSearchResult | null>(null);
   const [rounds, setRounds] = useState(1);
   const [running, setRunning] = useState(false);
@@ -40,6 +42,10 @@ export function Debate() {
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (selectedStock && selectedStock.code !== code) setSelectedStock(null);
+  }, [code, selectedStock]);
 
   const reset = () => {
     setStatus(""); setProgress([]); setMissing([]); setStages([]); setError(""); setSaved(false);
@@ -105,14 +111,22 @@ export function Debate() {
   }, [code, selectedStock, stages]);
 
   const changeCode = (nextCode: string) => {
-    setCode(nextCode);
+    const next = new URLSearchParams(searchParams);
+    if (nextCode.trim()) next.set("code", nextCode.trim());
+    else next.delete("code");
+    setSearchParams(next, { replace: true });
     if (selectedStock?.code !== nextCode) setSelectedStock(null);
+  };
+
+  const selectStock = (stock: StockSearchResult) => {
+    setSelectedStock(stock);
+    changeCode(stock.code);
   };
 
   return (
     <div>
       <PageHeader
-        title="AI 对话"
+        title="AI辩论"
         subtitle="围绕真实市场数据提问，或启动多角色研究流程交叉验证。"
         actions={<AskAiButton context={aiContext} label="问 AI" scopeKey={code || "general"} suggestions={code ? ["总结当前研究分歧", "这只股票的基本面怎么样", "主要风险有哪些"] : ["今天市场有哪些重要变化", "如何分析一家公司", "帮我建立研究框架"]} />}
       />
@@ -121,7 +135,7 @@ export function Debate() {
         <div className="flex flex-wrap items-end gap-3">
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">股票名称或代码</label>
-            <StockSearchInput value={code} onChange={changeCode} onSelect={setSelectedStock} disabled={running} className="w-56" />
+            <StockSearchInput value={code} onChange={changeCode} onSelect={selectStock} disabled={running} className="w-56" />
           </div>
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">研究深度</label>

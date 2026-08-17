@@ -19,7 +19,7 @@ export function SentimentBarChart({ sentiment, emotion }: Props) {
   const flatPct = pct(sentiment.flat, total);
   const downPct = pct(sentiment.down, total);
   const structure = [
-    { label: "涨停", value: sentiment.zt_real, color: "bg-danger", note: "真实涨停" },
+    { label: "涨停", value: sentiment.zt_real, color: "bg-danger", note: "真实涨停（乐咕）" },
     { label: "上涨", value: sentiment.up, color: "bg-danger/80", note: "上涨家数" },
     { label: "平盘", value: sentiment.flat, color: "bg-slate-300", note: "平盘家数" },
     { label: "下跌", value: sentiment.down, color: "bg-success/80", note: "下跌家数" },
@@ -28,7 +28,7 @@ export function SentimentBarChart({ sentiment, emotion }: Props) {
   const maxStructure = Math.max(...structure.map((row) => row.value), 1);
   const rates = [
     { label: "封板率", value: emotion?.seal_rate == null ? null : emotion.seal_rate * 100, color: "from-blue-400 to-blue-600" },
-    { label: "炸板率", value: emotion?.break_rate == null ? null : emotion.break_rate * 100, color: "from-amber-300 to-amber-500" },
+    { label: "炸板率", value: emotion?.break_rate == null ? null : emotion.break_rate * 100, color: "from-sky-300 to-sky-500" },
     { label: "晋级率", value: emotion?.promotion_rate == null ? null : emotion.promotion_rate * 100, color: "from-violet-400 to-violet-600" },
   ];
 
@@ -58,7 +58,7 @@ export function SentimentBarChart({ sentiment, emotion }: Props) {
     <section className="min-w-0 rounded-2xl border border-border/70 bg-background/65 p-5 shadow-[0_10px_26px_rgba(30,60,100,.07)]">
       <CardTitle hint="短线情绪采用封板、炸板、晋级三个真实比例，不虚构历史成交额">情绪活跃度</CardTitle>
       <div className="space-y-5 py-1">{rates.map((row) => <div key={row.label}><div className="mb-2 flex items-end justify-between"><span className="text-sm text-muted-foreground">{row.label}</span><strong className="font-mono text-xl">{row.value == null ? "—" : `${row.value.toFixed(1)}%`}</strong></div><div className="h-3 overflow-hidden rounded-full bg-muted/70"><div className={`h-full rounded-full bg-gradient-to-r ${row.color}`} style={{ width: `${Math.min(Math.max(row.value ?? 0, 0), 100)}%` }} /></div></div>)}</div>
-      <div className="mt-6 grid grid-cols-3 divide-x divide-border rounded-xl bg-muted/35 py-4 text-center"><div><span className="text-[10px] text-muted-foreground">涨停</span><strong className="block font-mono text-lg text-danger">{emotion?.zt_count ?? sentiment.zt_real}</strong></div><div><span className="text-[10px] text-muted-foreground">炸板</span><strong className="block font-mono text-lg text-warning">{emotion?.zb_count ?? "—"}</strong></div><div><span className="text-[10px] text-muted-foreground">最高连板</span><strong className="block font-mono text-lg text-primary">{emotion ? `${emotion.max_boards}板` : "—"}</strong></div></div>
+      <div className="mt-6 grid grid-cols-3 divide-x divide-border rounded-xl bg-muted/35 py-4 text-center"><div><span className="text-[10px] text-muted-foreground">封板（东财）</span><strong className="block font-mono text-lg text-danger">{emotion?.zt_count ?? "—"}</strong></div><div><span className="text-[10px] text-muted-foreground">炸板（东财）</span><strong className="block font-mono text-lg text-warning">{emotion?.zb_count ?? "—"}</strong></div><div><span className="text-[10px] text-muted-foreground">最高连板</span><strong className="block font-mono text-lg text-primary">{emotion ? `${emotion.max_boards}板` : "—"}</strong></div></div>
       <p className="mt-4 text-center text-[11px] text-muted-foreground">数据日期 {emotion?.date || sentiment.date || "—"} · 客观统计，不构成投资建议</p>
     </section>
   </div>;

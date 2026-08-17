@@ -25,6 +25,16 @@ def validate_release_evidence(payload: dict, base_dir: Path) -> dict[str, object
         item = payload.get(name) or {}
         if item.get("approved") is not True:
             raise RuntimeError(f"release evidence is not approved: {name}")
+        approver = item.get("approved_by")
+        if not isinstance(approver, str) or not approver.strip():
+            raise RuntimeError(f"release evidence approver is missing: {name}")
+        approved_at = item.get("approved_at")
+        try:
+            approved_time = datetime.fromisoformat(str(approved_at).replace("Z", "+00:00"))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"release evidence approval timestamp is invalid: {name}") from exc
+        if approved_time.tzinfo is None or approved_time > datetime.now(timezone.utc):
+            raise RuntimeError(f"release evidence approval timestamp is invalid: {name}")
         relative = item.get("evidence_file")
         if not isinstance(relative, str) or not relative:
             raise RuntimeError(f"release evidence file is missing: {name}")

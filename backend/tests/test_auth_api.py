@@ -85,12 +85,13 @@ def test_wildcard_credential_cors_configuration_is_rejected():
 
 
 def test_register_accepts_chinese_username_phone_and_11_digit_password():
-    credentials = {"username": "清数", "password": "19198273569", "phone": "19198273569"}
+    username = f"清数_{uuid4().hex[:12]}"
+    credentials = {"username": username, "password": "19198273569", "phone": "19198273569"}
     client = TestClient(app_module.app)
     try:
         response = client.post("/api/auth/register", json=credentials, headers={"Origin": ORIGIN})
         assert response.status_code == 201
-        assert response.json()["data"]["username"] == "清数"
-        assert client.post("/api/auth/login", json={"username": "清数", "password": "19198273569"}, headers={"Origin": ORIGIN}).status_code == 200
+        assert response.json()["data"]["username"] == username
+        assert client.post("/api/auth/login", json={"username": username, "password": "19198273569"}, headers={"Origin": ORIGIN}).status_code == 200
     finally:
-        _delete_user("清数")
+        _delete_user(username)

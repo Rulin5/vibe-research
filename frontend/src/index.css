@@ -8,9 +8,9 @@
     --foreground: 222 40% 12%;
     --card: 0 0% 100%;
     --card-foreground: 222 40% 12%;
-    --primary: 15 82% 50%;
+    --primary: 199 89% 58%;
     --primary-foreground: 0 0% 100%;
-    --accent: 25 90% 50%;
+    --accent: 199 89% 58%;
     --accent-foreground: 0 0% 100%;
     --muted: 210 20% 92%;
     --muted-foreground: 215 16% 42%;
@@ -20,8 +20,8 @@
     --radius: 1rem;
     --success: 145 62% 40%;
     --danger: 0 74% 52%;
-    --warning: 38 92% 45%;
-    --info: 15 82% 50%;
+    --warning: 199 89% 58%;
+    --info: 199 89% 58%;
     --glass-fill-top: rgba(255, 255, 255, 0.70);
     --glass-fill-bot: rgba(255, 255, 255, 0.35);
     --glass-stroke: rgba(15, 40, 70, 0.10);
@@ -43,9 +43,9 @@
     --foreground: 222 30% 16%;
     --card: 210 20% 98%;
     --card-foreground: 222 30% 16%;
-    --primary: 15 82% 48%;
+    --primary: 199 82% 53%;
     --primary-foreground: 0 0% 100%;
-    --accent: 25 86% 48%;
+    --accent: 199 82% 53%;
     --accent-foreground: 0 0% 100%;
     --muted: 215 13% 86%;
     --muted-foreground: 217 12% 40%;
@@ -54,8 +54,8 @@
     --border: 216 14% 76%;
     --success: 145 58% 37%;
     --danger: 0 72% 50%;
-    --warning: 38 88% 42%;
-    --info: 15 82% 48%;
+    --warning: 199 82% 53%;
+    --info: 199 82% 53%;
     --glass-fill-top: rgba(255, 255, 255, 0.82);
     --glass-fill-bot: rgba(247, 248, 250, 0.66);
     --glass-stroke: rgba(70, 82, 100, 0.16);
@@ -70,9 +70,9 @@
     --foreground: 220 22% 92%;
     --card: 223 27% 17%;
     --card-foreground: 220 22% 92%;
-    --primary: 15 78% 60%;
+    --primary: 199 92% 72%;
     --primary-foreground: 224 30% 12%;
-    --accent: 31 79% 61%;
+    --accent: 199 92% 72%;
     --accent-foreground: 224 30% 12%;
     --muted: 222 22% 23%;
     --muted-foreground: 220 14% 66%;
@@ -81,8 +81,8 @@
     --border: 220 20% 29%;
     --success: 145 48% 53%;
     --danger: 0 70% 64%;
-    --warning: 38 82% 60%;
-    --info: 15 78% 60%;
+    --warning: 199 92% 72%;
+    --info: 199 92% 72%;
     --glass-fill-top: rgba(255, 255, 255, 0.07);
     --glass-fill-bot: rgba(255, 255, 255, 0.022);
     --glass-stroke: rgba(220, 230, 255, 0.10);
@@ -98,20 +98,20 @@
     @apply bg-background text-foreground;
     background-color: hsl(var(--background));
     background-image:
-      radial-gradient(1100px 620px at 12% -12%, hsl(15 85% 55% / 0.08), transparent 60%),
+      radial-gradient(1100px 620px at 12% -12%, hsl(199 89% 58% / 0.10), transparent 60%),
       radial-gradient(980px 720px at 108% 112%, hsl(220 65% 60% / 0.06), transparent 55%);
     background-attachment: fixed;
   }
 
   .theme-soft body {
     background-image:
-      radial-gradient(1100px 620px at 12% -12%, hsl(15 78% 58% / 0.055), transparent 60%),
+      radial-gradient(1100px 620px at 12% -12%, hsl(199 82% 53% / 0.07), transparent 60%),
       radial-gradient(980px 720px at 108% 112%, hsl(215 24% 60% / 0.10), transparent 55%);
   }
 
   .theme-deep body {
     background-image:
-      radial-gradient(1100px 620px at 12% -12%, hsl(15 78% 60% / 0.09), transparent 60%),
+      radial-gradient(1100px 620px at 12% -12%, hsl(199 92% 72% / 0.12), transparent 60%),
       radial-gradient(980px 720px at 108% 112%, hsl(225 50% 48% / 0.12), transparent 55%);
   }
 

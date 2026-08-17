@@ -15,25 +15,44 @@ def test_health():
 
 
 def test_index_candles_batch_contract(monkeypatch):
-    def fake_batch(symbols, period="1d", limit=60):
-        return [{"symbol": symbol, "frequency": period, "candles": [], "data_status": "no_data"} for symbol in symbols]
-
-    monkeypatch.setattr(index_market, "get_index_series_batch", fake_batch)
+    monkeypatch.setattr(app_module, "_public_datasets", lambda: {
+        "index_candles": [
+            {"symbol": "CN.SH.000001", "frequency": "1d", "candles": [{"close": 1}]},
+            {"symbol": "GLOBAL.SPX", "frequency": "1d", "candles": [{"close": 2}]},
+        ],
+    })
     response = client.get("/api/market/index-candles?symbols=CN.SH.000001,GLOBAL.SPX&period=1d&limit=60")
     assert response.status_code == 200
     assert [row["symbol"] for row in response.json()["data"]] == ["CN.SH.000001", "GLOBAL.SPX"]
+    assert response.json()["data"][0]["candles"][-1]["close"] == 1
 
 
 def test_index_candles_rejects_unknown_symbol(monkeypatch):
-    def fail(*args, **kwargs):
-        raise index_market.UnknownIndex("UNKNOWN")
-
-    monkeypatch.setattr(index_market, "get_index_series_batch", fail)
+    monkeypatch.setattr(app_module, "_public_datasets", lambda: {"index_candles": []})
     assert client.get("/api/market/index-candles?symbols=UNKNOWN").status_code == 422
 
 
+def test_dashboard_uses_published_snapshot_without_calling_live_source(monkeypatch):
+    monkeypatch.setattr(app_module, "_public_datasets", lambda: {"indices": [{"name": "snapshot"}]})
+    monkeypatch.setattr(app_module.astock, "index_quote", lambda: (_ for _ in ()).throw(AssertionError("must not call live source")))
+
+    response = client.get("/api/indices")
+
+    assert response.status_code == 200
+    assert response.json()["data"] == [{"name": "snapshot"}]
+
+
+def test_dashboard_requires_a_published_snapshot(monkeypatch):
+    monkeypatch.setattr(app_module._PUBLIC_DATA_REFRESH.store, "load_current", lambda: None)
+
+    response = client.get("/api/indices")
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "public_data_snapshot_not_ready"
+
+
 @pytest.mark.parametrize("query", [
-    "symbols=CN.SH.000001&limit=19",
+    "symbols=CN.SH.000001&limit=0",
     "symbols=CN.SH.000001&limit=251",
     "symbols=CN.SH.000001&period=5m",
     "symbols=CN.SH.000001,CN.SH.000001",
@@ -61,7 +80,7 @@ def test_industry_top_range():
 def test_chat_empty_messages_400(authenticated_client):
     private_client, headers = authenticated_client
     r = private_client.post("/api/chat", json={"messages": []}, headers=headers)
-    assert r.status_code == 400
+    assert r.status_code == 422
 
 
 def test_chat_api_missing_key_400(authenticated_client, monkeypatch):
@@ -172,6 +191,46 @@ def test_stock_search_matches_code_or_name(monkeypatch):
 
 def test_stock_search_rejects_unsafe_short_queries():
     assert client.get("/api/stocks/search?query=a").status_code == 422
+
+
+def test_sector_reads_keep_serving_complete_stale_snapshot(monkeypatch):
+    snapshot = {
+        "snapshot_id": "stale-v1", "status": "completed", "as_of": "20260801",
+        "retrieved_at": "2026-08-01T15:00:00+08:00", "source": "TeaJoin/Tushare",
+        "market": "CN-A", "currency": "CNY", "timezone": "Asia/Shanghai", "frequency": "1d",
+        "method_version": "test", "completeness": {"candidate_count": 1, "published_count": 1, "excluded_count": 0},
+        "sectors": [{
+            "kind": "行业", "code": "881101.TI", "name": "种植业与林业", "as_of": "20260801",
+            "close": 1.0, "pct_change": 1.0, "member_count": 1, "lead_stock": "示例股",
+            "net_amount": 1.0, "data_status": "complete",
+        }],
+    }
+    monkeypatch.setattr(app_module._SECTOR_REFRESH, "readiness", lambda: {"ok": True, "stale": True, "age_seconds": 600})
+    monkeypatch.setattr(app_module._SECTOR_REFRESH.store, "load_current", lambda: snapshot)
+
+    response = client.get("/api/all-sectors")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["industries"]
+    assert response.json()["data"]["stale"] is True
+
+
+def test_sector_refresh_requires_authenticated_csrf_protected_request():
+    assert client.post("/api/sectors/refresh").status_code == 401
+
+
+def test_sector_refresh_is_user_rate_limited(authenticated_client, monkeypatch):
+    private_client, headers = authenticated_client
+    seen = {}
+    monkeypatch.setattr(app_module, "enforce_rate_limit", lambda request, scope, limit, window_seconds, user_id=None: seen.update({"scope": scope, "limit": limit, "user_id": user_id}))
+    monkeypatch.setattr(app_module._SECTOR_REFRESH, "start", lambda request_id: {"request_id": request_id, "status": "pending"})
+
+    response = private_client.post("/api/sectors/refresh", headers=headers)
+
+    assert response.status_code == 202
+    assert seen["scope"] == "sector-refresh"
+    assert seen["limit"] == 1
+    assert seen["user_id"]
 
 
 def test_sector_master_data_uses_only_ths_industry_and_concept_types(monkeypatch):

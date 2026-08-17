@@ -2,8 +2,13 @@
 // 后端未启动或数据源异常时抛 ApiError，页面据此优雅降级。
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  readonly status: number;
+  readonly code: string;
+
+  constructor(message: string, status: number, code = "request_failed") {
     super(message);
+    this.status = status;
+    this.code = code;
   }
 }
 
@@ -123,8 +128,9 @@ export interface IndexCandle {
 export interface IndexSeries {
   symbol: string; vendor_symbol: string; name: string; market: string; exchange: string;
   currency: string; timezone: string; frequency: "1d"; adjustment: "none";
-  source: string; source_api: string; retrieved_at: string; as_of: string | null;
-  data_status: "fresh" | "no_data" | "historical"; realtime_available: boolean;
+  source: string; source_api: string; retrieved_at: string; quote_at: null; as_of: string | null;
+  volume_unit: string | null; amount_unit: string;
+  data_status: "fresh" | "source_unavailable" | "historical"; status_reason: string | null; realtime_available: false;
   market_session: "pre_open" | "trading" | "lunch_break" | "closed" | "closed_day" | "local_market";
   candles: IndexCandle[];
 }
@@ -134,7 +140,7 @@ export interface MarketSentiment {
   active: string; breadth: string; speculation: string; date: string;
 }
 export interface SectorFlow {
-  name: string; pct: number; net: number; inflow: number; outflow: number; firms: number;
+  name: string; pct: number; net: number; inflow: number; outflow: number; firms: number; amount_unit: "100m_CNY";
 }
 export interface MarketOverview {
   sentiment: MarketSentiment; sectors: SectorFlow[]; updated: string;
@@ -197,7 +203,7 @@ export interface ResearchNote {
 
 // 资金面 / 筹码 / 信号（v3.3 并入，均为「用户查的那只股」的公开数据）
 export interface MarginRow { date: string; rzye: number; rzmre: number; rzche: number; rqye: number; rqmcl: number; rzrqye: number }
-export interface BlockTradeRow { date: string; price: number; close: number; premium_pct: number; vol: number; amount: number; buyer: string; seller: string }
+export interface BlockTradeRow { date: string; price: number; close: number; premium_pct: number | null; vol: number; amount: number; buyer: string; seller: string }
 export interface HolderRow { date: string; holder_num: number; change_ratio: number; avg_shares: number }
 export interface DividendRow { date: string; bonus_rmb: number; transfer_ratio: number; bonus_ratio: number | null; plan: string }
 export interface FundFlowRow { date: string; main_net: number; small_net: number; mid_net: number; large_net: number; super_net: number }
@@ -218,14 +224,20 @@ export interface IndustryData { top: IndustryRow[]; bottom: IndustryRow[]; total
 export interface SectorBoard {
   code: string; name: string; kind: "行业" | "概念";
   close: number; pct_change: number; member_count: number; lead_stock: string; net_amount: number;
+  provider_member_count?: number;
   as_of: string; data_status: "complete"; source?: string; source_api?: string;
   snapshot_id?: string; retrieved_at?: string; method_version?: string;
 }
-export interface SectorCompleteness { candidate_count: number; published_count: number; excluded_count: number; excluded_by_reason?: Record<string, number> }
+export interface SectorCompleteness {
+  candidate_count: number; published_count: number; excluded_count: number;
+  excluded_by_reason?: Record<string, number>; member_count_mismatch_count?: number;
+  reused_member_sector_count?: number;
+}
 export interface AllSectorsData {
   industries: SectorBoard[]; concepts: SectorBoard[]; source: string; as_of: string;
   snapshot_id: string; retrieved_at: string; market: string; currency: string; timezone: string;
   frequency: string; method_version: string; completeness: SectorCompleteness;
+  stale: boolean; age_seconds: number | null;
 }
 export interface SectorMember { code: string; name: string; market: string; joined_at: string }
 export interface SectorMembers { kind: string; code: string; source: string; snapshot_id: string; as_of: string; members: SectorMember[] }
@@ -277,7 +289,7 @@ export const api = {
   deleteWatchlist: (id: string) => request<void>(`/watchlist/${encodeURIComponent(id)}`, "DELETE"),
   health: () => get<{ ok: boolean }>("/health"),
   indices: () => get<IndexQuote[]>("/indices"),
-  indexCandles: (symbols: string[], limit = 60) =>
+  indexCandles: (symbols: string[], limit = 1) =>
     get<IndexSeries[]>(`/market/index-candles?symbols=${encodeURIComponent(symbols.join(","))}&period=1d&limit=${limit}`),
   marketOverview: () => get<MarketOverview>("/market/overview"),
   emotion: () => get<ShortTermEmotion>("/market/emotion"),

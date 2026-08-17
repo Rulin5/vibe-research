@@ -5,6 +5,8 @@ import test from "node:test";
 const themeHook = await readFile(new URL("../src/hooks/useDarkMode.ts", import.meta.url), "utf8");
 const layout = await readFile(new URL("../src/components/layout/Layout.tsx", import.meta.url), "utf8");
 const css = await readFile(new URL("../src/index.css", import.meta.url), "utf8");
+const allocationData = await readFile(new URL("../src/data/assetAllocationScenarios.ts", import.meta.url), "utf8");
+const sentimentChart = await readFile(new URL("../src/components/SentimentBarChart.tsx", import.meta.url), "utf8");
 
 test("theme defaults to light and migrates legacy dark preference to the soft gray theme", () => {
   assert.match(themeHook, /DEFAULT_THEME(?:\s*:\s*ThemeName)?\s*=\s*"light"/);
@@ -27,4 +29,12 @@ test("soft is a light gray theme while deep remains a non-black night theme", ()
   assert.match(css, /\.theme-soft\s*\{[\s\S]*?--background:\s*215\s+14%\s+92%/);
   assert.match(themeHook, /const isDark = theme === "deep"/);
   assert.doesNotMatch(themeHook, /theme === "soft"\) root\.classList\.add\("dark"/);
+});
+
+test("the shared visual accent uses light sky blue instead of orange", () => {
+  assert.match(css, /--primary:\s*199\s+89%\s+58%/);
+  assert.match(css, /--accent:\s*199\s+89%\s+58%/);
+  assert.match(sentimentChart, /from-sky-300 to-sky-500/);
+  assert.doesNotMatch(allocationData, /#f59e0b/i);
+  assert.doesNotMatch(sentimentChart, /amber/i);
 });

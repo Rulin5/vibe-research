@@ -10,6 +10,9 @@ from fastapi import HTTPException, Request, status
 from redis import Redis
 from redis.exceptions import RedisError
 
+from db import DatabaseConfigError, database_url
+import teajoin
+
 
 LOCAL_MODE = "local"
 PUBLIC_MODE = "public"
@@ -42,6 +45,14 @@ def require_secure_cookie() -> None:
 def enforce_startup_policy() -> None:
     if not is_public_mode():
         return
+    try:
+        database_url()
+    except DatabaseConfigError as exc:
+        raise RuntimeError("VR_DATABASE_URL must be configured for public mode") from exc
+    try:
+        teajoin._api_key()
+    except teajoin.TeaJoinConfigError as exc:
+        raise RuntimeError("TEAJOIN_API_KEY is required for public mode") from exc
     require_secure_cookie()
     origins = parse_csv_env("VR_ALLOW_ORIGINS")
     if not origins or any(not origin.startswith("https://") for origin in origins):

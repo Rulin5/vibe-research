@@ -4,7 +4,7 @@ services:
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
-    env_file: deploy/demo.env
+    env_file: ${VR_ENV_FILE:-deploy/demo.env}
     volumes: ["demo_postgres:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
@@ -15,7 +15,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    env_file: deploy/demo.env
+    env_file: ${VR_ENV_FILE:-deploy/demo.env}
     command: ["sh", "-c", "redis-server --appendonly yes --requirepass $$REDIS_PASSWORD"]
     volumes: ["demo_redis:/data"]
     healthcheck:
@@ -39,20 +39,49 @@ services:
     build:
       context: .
       dockerfile: deploy/Dockerfile.backend
-    env_file: deploy/demo.env
+    env_file: ${VR_ENV_FILE:-deploy/demo.env}
     command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
     depends_on:
       postgres: {condition: service_healthy}
+
+  sector-bootstrap:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    env_file: ${VR_ENV_FILE:-deploy/demo.env}
+    environment:
+      VR_DATA_DIR: /data/runtime
+    command: ["python", "sector_bootstrap.py"]
+    volumes: ["sector_data:/data/runtime"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+  public-data-bootstrap:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    env_file: ${VR_ENV_FILE:-deploy/demo.env}
+    environment:
+      VR_DATA_DIR: /data/runtime
+    command: ["python", "public_data_bootstrap.py"]
+    volumes: ["sector_data:/data/runtime"]
+    depends_on:
+      sector-bootstrap: {condition: service_completed_successfully}
 
   api:
     build:
       context: .
       dockerfile: deploy/Dockerfile.backend
     restart: unless-stopped
-    env_file: deploy/demo.env
-    volumes: ["demo_reports:/data/reports"]
+    env_file: ${VR_ENV_FILE:-deploy/demo.env}
+    environment:
+      VR_DATA_DIR: /data/runtime
+      VR_REQUIRE_FRESH_SECTOR_SNAPSHOT: "true"
+    volumes: ["demo_reports:/data/reports", "sector_data:/data/runtime"]
     depends_on:
       migrate: {condition: service_completed_successfully}
+      sector-bootstrap: {condition: service_completed_successfully}
+      public-data-bootstrap: {condition: service_completed_successfully}
       redis: {condition: service_healthy}
       clamav: {condition: service_healthy}
     healthcheck:
@@ -60,6 +89,34 @@ services:
       interval: 5s
       timeout: 4s
       retries: 30
+
+  sector-scheduler:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    restart: unless-stopped
+    env_file: ${VR_ENV_FILE:-deploy/demo.env}
+    environment:
+      VR_DATA_DIR: /data/runtime
+      VR_SECTOR_REFRESH_INTERVAL_SECONDS: "300"
+    command: ["python", "sector_scheduler.py"]
+    volumes: ["sector_data:/data/runtime"]
+    depends_on:
+      api: {condition: service_healthy}
+
+  public-data-scheduler:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    restart: unless-stopped
+    env_file: ${VR_ENV_FILE:-deploy/demo.env}
+    environment:
+      VR_DATA_DIR: /data/runtime
+      VR_PUBLIC_DATA_REFRESH_INTERVAL_SECONDS: "300"
+    command: ["python", "public_data_scheduler.py"]
+    volumes: ["sector_data:/data/runtime"]
+    depends_on:
+      api: {condition: service_healthy}
 
   gateway:
     build:
@@ -75,3 +132,4 @@ volumes:
   demo_redis:
   demo_clamav:
   demo_reports:
+  sector_data:

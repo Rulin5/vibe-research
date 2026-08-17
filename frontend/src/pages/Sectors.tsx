@@ -10,6 +10,7 @@ import { api } from "@/lib/api";
 import type { SectorBoard, StockSearchResult } from "@/lib/api";
 
 type KindFilter = "all" | "行业" | "概念";
+const SECTOR_POLL_INTERVAL_MS = 300_000;
 
 const hasDailyClose = (s: SectorBoard) => s.data_status === "complete";
 
@@ -21,32 +22,42 @@ export function Sectors() {
   const [stockResults, setStockResults] = useState<StockSearchResult[]>([]);
   const [asOf, setAsOf] = useState<string | null>(null);
   const [snapshotId, setSnapshotId] = useState<string | null>(null);
+  const [retrievedAt, setRetrievedAt] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
   const [completeness, setCompleteness] = useState<{ published: number; candidate: number } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    api.allSectors()
-      .then((d) => {
-        if (!cancelled) {
+    let hasLoaded = false;
+    const loadSnapshot = () => {
+      api.allSectors()
+        .then((d) => {
+          if (cancelled) return;
           const all = [...d.industries, ...d.concepts];
+          if (all.length === 0) throw new Error("empty sector snapshot");
           setSectors(all);
           setAsOf(d.as_of);
           setSnapshotId(d.snapshot_id);
+          setRetrievedAt(d.retrieved_at);
+          setStale(d.stale);
           setCompleteness({ published: d.completeness.published_count, candidate: d.completeness.candidate_count });
           setLoadError(null);
           setLoading(false);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setLoadError("验证板块快照暂不可用，请先刷新数据后重试。");
+          hasLoaded = true;
+        })
+        .catch(() => {
+          if (cancelled) return;
+          // A failed refresh never clears a snapshot already visible to users.
+          if (!hasLoaded) setLoadError("验证板块快照暂不可用，请稍后重试。");
+          setStale(true);
           setLoading(false);
-        }
-      });
-    return () => { cancelled = true; };
+        });
+    };
+    loadSnapshot();
+    const timer = window.setInterval(loadSnapshot, SECTOR_POLL_INTERVAL_MS);
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
 
   const refreshSnapshot = () => {
@@ -110,6 +121,12 @@ export function Sectors() {
           </div>
         }
       />
+
+      {stale && sectors.length > 0 && (
+        <div className="mb-4 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+          数据更新延迟，当前继续展示最近一次成功快照；后台会每 5 分钟重试，不会清空已展示数据。
+        </div>
+      )}
 
       {/* 分类筛选 tabs */}
       <div className="mb-4 flex flex-wrap gap-2">
@@ -219,7 +236,7 @@ export function Sectors() {
       )}
 
       <p className="mt-4 text-center text-xs text-muted-foreground/60">
-        日线收盘数据 · 行业 {industryCount} 个、概念 {conceptCount} 个 · 已校验 {completeness?.published ?? withDataCount}/{completeness?.candidate ?? withDataCount} 个候选板块{asOf ? ` · 交易日 ${asOf}` : ""}{snapshotId ? ` · 快照 ${snapshotId}` : ""}。
+        日线收盘数据 · 行业 {industryCount} 个、概念 {conceptCount} 个 · 已校验 {completeness?.published ?? withDataCount}/{completeness?.candidate ?? withDataCount} 个候选板块{asOf ? ` · 交易日 ${asOf}` : ""}{retrievedAt ? ` · 最近更新 ${new Date(retrievedAt).toLocaleString("zh-CN", { hour12: false })}` : ""}{snapshotId ? ` · 快照 ${snapshotId}` : ""}。
       </p>
     </div>
   );

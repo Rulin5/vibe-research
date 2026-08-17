@@ -9,15 +9,21 @@
 1. 将 `deploy/production.env.example` 复制为 `deploy/production.env`，替换全部 `CHANGE_ME`。数据库密码若含 URL 特殊字符，必须在 `VR_DATABASE_URL` 中做百分号编码。
 2. 把目标域名写入 `VR_ALLOW_ORIGINS`；生产模式只接受 `https://` 来源。把允许的 AI API 域名写入 `VR_AI_ALLOWED_HOSTS`。
 3. 将证书放到 `deploy/certs/fullchain.pem` 与 `deploy/certs/privkey.pem`，不要提交证书、私钥或生产环境文件。
-4. 先备份数据库，再执行迁移：
+4. 先备份数据库。常规启动会先执行一次性 `migrate` 服务，随后构建或校验持久化的已验证板块快照；任一环节失败时 API 与网关不会启动。若需在维护窗口预先执行迁移，可运行：
 
-   `docker compose --env-file deploy/production.env -f compose.production.yaml --profile migration run --rm migrate`
+   `docker compose --env-file deploy/production.env -f compose.production.yaml run --rm migrate`
 
-5. 启动：
+5. 执行发布脚本。它会先验证生产配置和 Compose，构建镜像，单独执行迁移；迁移成功后才重建 API、快照引导、定时刷新、网关和监控服务：
 
-   `docker compose --env-file deploy/production.env -f compose.production.yaml up -d --build`
+   `powershell -ExecutionPolicy Bypass -File deploy/scripts/release.ps1`
 
-6. 验证 `https://目标域名/api/health` 与 `/api/ready` 均返回 200；用一次 EICAR 测试文件验证上传被拦截，并立即删除测试文件。
+6. 验证 `https://目标域名/api/health` 与 `/api/ready` 均返回 200。`/api/ready` 同时要求 PostgreSQL、Redis 和不超过三日的完整板块快照；若板块数据尚未生成或过期，它会返回 503，网关不会接入流量。用一次 EICAR 测试文件验证上传被拦截，并立即删除测试文件。
+
+板块快照保存在 Compose 的 `sector_data` 卷（容器内 `/data/runtime`）。升级和 API 容器替换不会删除该卷；不要手工清除，除非准备重新构建全部验证快照。
+
+板块中心仅使用 TeaJoin/Tushare 兼容数据源：`moneyflow_ind_ths`、`moneyflow_cnt_ths` 提供带交易日的板块行情摘要，`ths_member` 提供成分股。后台每 5 分钟刷新摘要；同一交易日复用已经校验的成分股，避免每轮产生数百次重复请求。行情摘要中的供应商公司数只保留为审计字段，页面成员数量以 `ths_member` 的有效去重结果为准。刷新采用原子发布，刷新中或供应商失败时继续提供上一份非空快照并标记为延迟，绝不把刷新过程中的空数据暴露给用户。
+
+每日复盘的公开指数、全球指数、市场总览、短线情绪、成交额榜和指数 K 线也保存在该持久卷。首次部署必须由 `public-data-bootstrap` 成功生成完整快照后，API 与网关才会启动。HTTP 请求只读取已发布快照，不会等待第三方抓取；后台 `public-data-scheduler` 每 5 分钟尝试更新，更新失败或任一可见数据块为空时拒绝发布，并继续提供上一份成功快照。该策略允许数据延迟，但不允许刷新过程向用户暴露空白数据。
 
 ## 备份与恢复
 

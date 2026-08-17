@@ -477,7 +477,7 @@ export function StockData() {
                       <div key={i} className="flex items-center gap-3 text-xs">
                         <span className="w-20 shrink-0 font-mono text-muted-foreground">{b.date}</span>
                         <span className="w-14 shrink-0">{b.price} 元</span>
-                        <span className={cn("w-20 shrink-0", b.premium_pct >= 0 ? "text-danger" : "text-success")}>折溢 {b.premium_pct}%</span>
+                        <span className={cn("w-20 shrink-0", b.premium_pct == null ? "text-muted-foreground" : b.premium_pct >= 0 ? "text-danger" : "text-success")}>折溢 {b.premium_pct == null ? "—" : `${b.premium_pct}%`}</span>
                         <span className="flex-1 truncate text-muted-foreground">买 {b.buyer} · 卖 {b.seller}</span>
                       </div>
                     ))}

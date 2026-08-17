@@ -26,6 +26,7 @@ def test_verified_snapshot_uses_same_day_daily_industry_and_concept_sources(monk
     assert snapshot["as_of"] == "20260811"
     assert snapshot["completeness"] == {
         "candidate_count": 2, "published_count": 2, "excluded_count": 0, "excluded_by_reason": {},
+        "member_count_mismatch_count": 0, "reused_member_sector_count": 0,
         "provider_row_counts": {"moneyflow_ind_ths": 1, "moneyflow_cnt_ths": 1},
     }
     assert {row["kind"] for row in snapshot["sectors"]} == {"行业", "概念"}
@@ -56,6 +57,63 @@ def test_verified_snapshot_excludes_daily_sector_without_constituents(monkeypatc
     assert snapshot["completeness"]["candidate_count"] == 1
     assert snapshot["completeness"]["excluded_count"] == 1
     assert snapshot["completeness"]["excluded_by_reason"] == {"empty_members": 1}
+
+
+def test_verified_snapshot_keeps_sector_when_provider_member_count_differs(monkeypatch):
+    def fake_call(api_name, params=None, fields=""):
+        if api_name == "moneyflow_ind_ths":
+            return [{
+                "trade_date": "20260811", "ts_code": "881101.TI", "industry": "种植业与林业",
+                "close": 4022.37, "pct_change": -1.32, "company_num": 99,
+                "lead_stock": "示例行业股", "net_amount": 100.5,
+            }]
+        if api_name == "moneyflow_cnt_ths":
+            return []
+        if api_name == "ths_member":
+            return [
+                {"con_code": "600000.SH", "con_name": "浦发银行", "in_date": "20200101", "out_date": ""},
+                {"con_code": "000001.SZ", "con_name": "平安银行", "in_date": "20200101", "out_date": ""},
+            ]
+        raise AssertionError(api_name)
+
+    monkeypatch.setattr(astock.teajoin, "call", fake_call)
+
+    snapshot, members = astock.build_verified_sector_snapshot("20260811")
+
+    assert len(snapshot["sectors"]) == 1
+    assert snapshot["sectors"][0]["member_count"] == 2
+    assert snapshot["sectors"][0]["provider_member_count"] == 99
+    assert snapshot["completeness"]["member_count_mismatch_count"] == 1
+    assert snapshot["completeness"]["excluded_count"] == 0
+    assert len(members[("行业", "881101.TI")]) == 2
+
+
+def test_verified_snapshot_reuses_same_day_verified_members(monkeypatch):
+    def fake_call(api_name, params=None, fields=""):
+        if api_name == "moneyflow_ind_ths":
+            return [{
+                "trade_date": "20260811", "ts_code": "881101.TI", "industry": "种植业与林业",
+                "close": 4022.37, "pct_change": -1.32, "company_num": 1,
+                "lead_stock": "示例行业股", "net_amount": 100.5,
+            }]
+        if api_name == "moneyflow_cnt_ths":
+            return []
+        if api_name == "ths_member":
+            raise AssertionError("same-day members must be reused")
+        raise AssertionError(api_name)
+
+    reusable = {
+        ("行业", "881101.TI"): [
+            {"code": "600000", "name": "浦发银行", "market": "A股", "joined_at": "20200101"},
+        ],
+    }
+    monkeypatch.setattr(astock.teajoin, "call", fake_call)
+
+    snapshot, members = astock.build_verified_sector_snapshot("20260811", reusable_members=reusable)
+
+    assert snapshot["sectors"][0]["member_count"] == 1
+    assert snapshot["completeness"]["reused_member_sector_count"] == 1
+    assert members == reusable
 
 
 def test_daily_industry_without_a_name_is_not_normalized():

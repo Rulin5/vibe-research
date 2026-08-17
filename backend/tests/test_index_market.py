@@ -16,9 +16,11 @@ def test_history_is_normalized_oldest_first(monkeypatch):
 
     series = index_market.get_index_series("CN.SH.000001", limit=60, use_cache=False)
 
-    assert [row["trade_date"] for row in series["candles"]] == ["2026-08-08", "2026-08-11"]
+    assert [row["trade_date"] for row in series["candles"]] == ["2026-08-11"]
     assert series["source_api"] == "index_daily"
     assert series["candles"][-1]["is_partial"] is False
+    assert series["candles"][-1]["amount"] == 200_000
+    assert series["amount_unit"] == "CNY"
 
 
 def test_global_symbol_uses_index_global(monkeypatch):
@@ -81,3 +83,112 @@ def test_cn_series_uses_trade_calendar_for_session(monkeypatch):
     monkeypatch.setattr(index_market, "_utc_now", lambda: datetime.fromisoformat("2026-08-12T10:00:00+08:00"))
     series = index_market.get_index_series("CN.SH.000001", use_cache=False)
     assert series["market_session"] == "closed_day"
+
+
+def test_open_session_uses_the_previous_trade_day_when_teajoin_has_not_published_today(monkeypatch):
+    index_market._SESSION_CACHE.clear()
+
+    def fake_call(api_name, params, fields=""):
+        if api_name == "trade_cal":
+            return [{"cal_date": "20260812", "is_open": 1}]
+        return [{"trade_date": "20260811", "open": 3900, "high": 3950, "low": 3880, "close": 3930}]
+
+    monkeypatch.setattr(index_market.teajoin, "call", fake_call)
+    monkeypatch.setattr(index_market, "_utc_now", lambda: datetime.fromisoformat("2026-08-12T10:15:00+08:00"))
+
+    series = index_market.get_index_series("CN.SH.000001", use_cache=False)
+
+    assert series["as_of"] == "2026-08-11"
+    assert series["data_status"] == "historical"
+    assert series["realtime_available"] is False
+    assert [row["trade_date"] for row in series["candles"]] == ["2026-08-11"]
+
+
+def test_market_session_change_does_not_reuse_a_trading_cache(monkeypatch):
+    """The last intraday cache cannot stand in for an official close."""
+    index_market._SESSION_CACHE.clear()
+    index_market._CACHE.clear()
+    calls = []
+
+    def fake_call(api_name, params, fields=""):
+        if api_name == "trade_cal":
+            return [{"cal_date": "20260812", "is_open": 1}]
+        calls.append(api_name)
+        return [{"trade_date": "20260812", "open": 3900, "high": 3950, "low": 3880, "close": 3930}]
+
+    times = iter([
+        datetime.fromisoformat("2026-08-12T14:59:50+08:00"),
+        datetime.fromisoformat("2026-08-12T14:59:50+08:00"),
+        datetime.fromisoformat("2026-08-12T15:00:10+08:00"),
+        datetime.fromisoformat("2026-08-12T15:00:10+08:00"),
+    ])
+    monkeypatch.setattr(index_market.teajoin, "call", fake_call)
+    monkeypatch.setattr(index_market, "_utc_now", lambda: next(times))
+    index_market.get_index_series("CN.SH.000001", use_cache=True)
+    index_market.get_index_series("CN.SH.000001", use_cache=True)
+
+    assert calls == ["index_daily", "index_daily"]
+
+
+def test_global_series_uses_its_own_currency_for_amount_metadata(monkeypatch):
+    monkeypatch.setattr(index_market.teajoin, "call", lambda *args, **kwargs: [
+        {"trade_date": "20260811", "open": 7700, "high": 7800, "low": 7600, "close": 7750},
+    ])
+    monkeypatch.setattr(index_market, "_utc_now", lambda: datetime.fromisoformat("2026-08-12T08:00:00+00:00"))
+    series = index_market.get_index_series("GLOBAL.SPX", use_cache=False)
+
+    assert series["amount_unit"] == "USD"
+
+
+def test_current_day_chart_uses_only_the_latest_teajoin_daily_candle(monkeypatch):
+    """The daily-review chart must not append a quote from another supplier."""
+    index_market._SESSION_CACHE.clear()
+
+    def fake_call(api_name, params, fields=""):
+        if api_name == "trade_cal":
+            return [{"cal_date": "20260812", "is_open": 1}]
+        return [
+            {"trade_date": "20260811", "open": 3900, "high": 3950, "low": 3880, "close": 3930},
+            {"trade_date": "20260812", "open": 3930, "high": 3970, "low": 3920, "close": 3960},
+        ]
+
+    monkeypatch.setattr(index_market.teajoin, "call", fake_call)
+    monkeypatch.setattr(index_market, "_utc_now", lambda: datetime.fromisoformat("2026-08-12T16:00:00+08:00"))
+
+    series = index_market.get_index_series("CN.SH.000001", limit=60, use_cache=False)
+
+    assert series["source"] == "TeaJoin"
+    assert series["source_api"] == "index_daily"
+    assert series["realtime_available"] is False
+    assert [row["trade_date"] for row in series["candles"]] == ["2026-08-12"]
+    assert series["candles"][-1]["close"] == 3960.0
+
+
+def test_current_day_chart_uses_previous_trade_day_when_teajoin_has_no_same_day_candle(monkeypatch):
+    index_market._SESSION_CACHE.clear()
+
+    def fake_call(api_name, params, fields=""):
+        if api_name == "trade_cal":
+            return [{"cal_date": "20260812", "is_open": 1}]
+        return [{"trade_date": "20260811", "open": 3900, "high": 3950, "low": 3880, "close": 3930}]
+
+    monkeypatch.setattr(index_market.teajoin, "call", fake_call)
+    monkeypatch.setattr(index_market, "_utc_now", lambda: datetime.fromisoformat("2026-08-12T16:00:00+08:00"))
+
+    series = index_market.get_index_series("CN.SH.000001", limit=60, use_cache=False)
+
+    assert series["data_status"] == "historical"
+    assert series["status_reason"] == "previous_trade_day"
+    assert [row["trade_date"] for row in series["candles"]] == ["2026-08-11"]
+
+
+def test_chart_keeps_only_the_latest_teajoin_trade_day(monkeypatch):
+    monkeypatch.setattr(index_market.teajoin, "call", lambda *args, **kwargs: [
+        {"trade_date": "20260808", "open": 3800, "high": 3850, "low": 3780, "close": 3830},
+        {"trade_date": "20260811", "open": 3830, "high": 3900, "low": 3820, "close": 3890},
+    ])
+    monkeypatch.setattr(index_market, "_utc_now", lambda: datetime.fromisoformat("2026-08-12T08:00:00+00:00"))
+
+    series = index_market.get_index_series("GLOBAL.SPX", limit=60, use_cache=False)
+
+    assert [row["trade_date"] for row in series["candles"]] == ["2026-08-11"]

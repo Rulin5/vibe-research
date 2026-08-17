@@ -30,13 +30,22 @@ def test_complete_existing_evidence_passes(tmp_path):
     payload = {}
     for name, filename in REQUIRED.items():
         (tmp_path / filename).write_text("approved", encoding="utf-8")
-        payload[name] = {"approved": True, "evidence_file": filename}
+        payload[name] = {
+            "approved": True, "approved_by": "release-manager",
+            "approved_at": datetime.now(timezone.utc).isoformat(), "evidence_file": filename,
+        }
 
     assert validate_release_evidence(payload, tmp_path)["status"] == "passed"
 
 
 def test_evidence_path_cannot_escape_manifest_directory(tmp_path):
-    payload = {name: {"approved": True, "evidence_file": filename} for name, filename in REQUIRED.items()}
+    payload = {
+        name: {
+            "approved": True, "approved_by": "release-manager",
+            "approved_at": datetime.now(timezone.utc).isoformat(), "evidence_file": filename,
+        }
+        for name, filename in REQUIRED.items()
+    }
     payload["tls"]["evidence_file"] = "../outside.txt"
 
     with pytest.raises(RuntimeError, match="inside"):
@@ -47,8 +56,21 @@ def test_expired_evidence_blocks_release(tmp_path):
     payload = {}
     for name, filename in REQUIRED.items():
         (tmp_path / filename).write_text("approved", encoding="utf-8")
-        payload[name] = {"approved": True, "evidence_file": filename}
+        payload[name] = {
+            "approved": True, "approved_by": "release-manager",
+            "approved_at": datetime.now(timezone.utc).isoformat(), "evidence_file": filename,
+        }
     payload["tls"]["expires_at"] = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
 
     with pytest.raises(RuntimeError, match="expired"):
+        validate_release_evidence(payload, tmp_path)
+
+
+def test_evidence_requires_an_accountable_approver_and_timestamp(tmp_path):
+    payload = {}
+    for name, filename in REQUIRED.items():
+        (tmp_path / filename).write_text("approved", encoding="utf-8")
+        payload[name] = {"approved": True, "evidence_file": filename}
+
+    with pytest.raises(RuntimeError, match="approver"):
         validate_release_evidence(payload, tmp_path)

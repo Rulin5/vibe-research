@@ -46,3 +46,10 @@ test("sector UI consumes one verified snapshot and exposes refresh state", () =>
   assert.match(sectors, /snapshot_id/);
   assert.match(detail, /snapshot_id/);
 });
+
+test("sector center refreshes every five minutes and keeps delayed data visible", () => {
+  assert.match(api, /stale: boolean/);
+  assert.match(sectors, /300_000/);
+  assert.match(sectors, /数据更新延迟/);
+  assert.doesNotMatch(sectors, /setSectors\(\[\]\)/);
+});

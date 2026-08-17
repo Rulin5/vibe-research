@@ -4,12 +4,13 @@ import test from "node:test";
 
 const page = readFileSync(new URL("../src/pages/Debate.tsx", import.meta.url), "utf8");
 const layout = readFileSync(new URL("../src/components/layout/Layout.tsx", import.meta.url), "utf8");
+const router = readFileSync(new URL("../src/router.tsx", import.meta.url), "utf8");
 
-test("debate page is renamed to AI conversation and exposes Ask AI", () => {
-  assert.match(page, /title="AI 对话"/);
+test("debate page remains available after AI research and exposes Ask AI", () => {
+  assert.match(page, /title="AI辩论"/);
   assert.match(page, /<AskAiButton/);
   assert.match(page, /label="问 AI"/);
-  assert.match(layout, /label: "AI 对话"/);
+  assert.match(router, /path: "debate", element: <Debate \/>/);
 });
 
 test("the obsolete empty-state copy is removed", () => {
@@ -28,7 +29,7 @@ test("visible workflow copy consistently uses research language", () => {
 
 test("selected stock identity and generated research are included in Ask AI context", () => {
   assert.match(page, /type StockSearchResult/);
-  assert.match(page, /onSelect=\{setSelectedStock\}/);
+  assert.match(page, /onSelect=\{selectStock\}/);
   assert.match(page, /selectedStock\.name/);
   assert.match(page, /selectedStock\.code/);
   assert.match(page, /研究流程输出/);

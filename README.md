@@ -141,6 +141,18 @@ Vibe-Research/
 
 ## 快速开始
 
+### TeaJoin 数据源
+
+A 股历史行情、估值、财务、融资融券、大宗交易、股东户数、分红、资金流、龙虎榜、限售解禁、股票检索和板块数据统一通过 TeaJoin/Tushare 适配层读取。实时行情、新闻、公告、研报 PDF 和港美股不在 TeaJoin 通用套餐内，继续使用项目原有的独立公开数据源。
+
+手动开发时，把兑换得到的 API Key 写入不会提交到 Git 的 `backend/.env`：
+
+```dotenv
+TEAJOIN_API_KEY=YOUR_API_KEY
+```
+
+TeaJoin 请求使用 15 秒超时、至少 0.2 秒调用间隔和有限重试；密钥只在后端读取，前端不会收到或保存密钥。
+
 ### Docker Desktop 一键运行（推荐交付方式）
 
 Windows 安装并启动 Docker Desktop 后，在项目根目录执行：

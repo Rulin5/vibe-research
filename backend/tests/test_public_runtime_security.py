@@ -22,6 +22,23 @@ def test_public_mode_rejects_insecure_session_cookie(monkeypatch):
         auth.cookie_secure()
 
 
+def test_public_startup_requires_database_and_teajoin_configuration(monkeypatch):
+    monkeypatch.setenv("VR_DEPLOYMENT_MODE", "public")
+    monkeypatch.setenv("VR_COOKIE_SECURE", "true")
+    monkeypatch.setenv("VR_DATABASE_URL", "postgresql+psycopg://user:password@postgres:5432/vibe_research")
+    monkeypatch.setenv("TEAJOIN_API_KEY", "configured")
+    monkeypatch.setenv("VR_ALLOW_ORIGINS", "https://research.example.com")
+    monkeypatch.setenv("VR_REDIS_URL", "redis://redis:6379/0")
+    monkeypatch.setenv("VR_AI_ALLOWED_HOSTS", "api.stepfun.com")
+    monkeypatch.setenv("VR_REPORT_SCAN_COMMAND", "scanner {path}")
+    monkeypatch.setenv("VR_CREDENTIAL_ENCRYPTION_KEY", "configured-for-startup-policy-test")
+    monkeypatch.delenv("VR_DATABASE_URL", raising=False)
+    monkeypatch.setenv("TEAJOIN_API_KEY", "configured")
+
+    with pytest.raises(RuntimeError, match="VR_DATABASE_URL"):
+        runtime_security.enforce_startup_policy()
+
+
 @pytest.mark.parametrize(
     "missing, message",
     [
@@ -39,6 +56,8 @@ def test_public_startup_rejects_missing_required_control(monkeypatch, missing, m
     monkeypatch.setenv("VR_AI_ALLOWED_HOSTS", "api.stepfun.com")
     monkeypatch.setenv("VR_REPORT_SCAN_COMMAND", "scanner {path}")
     monkeypatch.setenv("VR_CREDENTIAL_ENCRYPTION_KEY", "configured-for-startup-policy-test")
+    monkeypatch.setenv("VR_DATABASE_URL", "postgresql+psycopg://user:password@postgres:5432/vibe_research")
+    monkeypatch.setenv("TEAJOIN_API_KEY", "configured")
     monkeypatch.delenv(missing)
 
     with pytest.raises(RuntimeError, match=message):

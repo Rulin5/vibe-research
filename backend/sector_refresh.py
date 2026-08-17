@@ -20,6 +20,10 @@ def _now() -> str:
     return datetime.now(_BEIJING).isoformat(timespec="seconds")
 
 
+def _today():
+    return datetime.now(_BEIJING).date()
+
+
 def default_store() -> SectorSnapshotStore:
     return SectorSnapshotStore(Path(os.environ.get("VR_DATA_DIR") or Path.home() / ".vibe-research"))
 
@@ -65,6 +69,34 @@ class SectorRefreshService:
         with self._lock:
             return dict(self._state)
 
+    def readiness(self) -> dict:
+        """A complete last-known snapshot stays readable while refresh catches up."""
+        snapshot = self.store.load_current()
+        if snapshot is None:
+            return {"ok": False, "reason": "snapshot_missing"}
+        sectors = snapshot.get("sectors")
+        if not isinstance(sectors, list) or not sectors:
+            return {"ok": False, "reason": "snapshot_empty", "snapshot_id": snapshot.get("snapshot_id")}
+        as_of = str(snapshot.get("as_of") or "")
+        try:
+            snapshot_date = datetime.strptime(as_of, "%Y%m%d").date()
+        except ValueError:
+            return {"ok": False, "reason": "snapshot_invalid", "snapshot_id": snapshot.get("snapshot_id")}
+        age_days = (_today() - snapshot_date).days
+        if age_days < 0:
+            return {"ok": False, "reason": "snapshot_invalid", "snapshot_id": snapshot.get("snapshot_id")}
+        retrieved_at = str(snapshot.get("retrieved_at") or "")
+        try:
+            retrieved = datetime.fromisoformat(retrieved_at)
+            age_seconds = max(0, int((datetime.now(_BEIJING) - retrieved).total_seconds()))
+        except ValueError:
+            age_seconds = None
+        stale = age_days > 3 or age_seconds is None or age_seconds > 300
+        return {
+            "ok": True, "stale": stale, "age_seconds": age_seconds,
+            "snapshot_id": snapshot.get("snapshot_id"), "as_of": as_of, "retrieved_at": retrieved_at,
+        }
+
     def start(self, request_id: str) -> dict:
         with self._lock:
             if self._state.get("status") in {"pending", "running"} and self._thread is not None:
@@ -79,6 +111,10 @@ class SectorRefreshService:
             return dict(self._state)
 
     def run_once(self, request_id: str) -> dict:
+        refresh_lock = self.store.try_acquire_refresh_lock()
+        if refresh_lock is None:
+            # Never overwrite state owned by the process that currently holds the lock.
+            return {"status": "skipped", "current_step": "already_running"}
         with self._lock:
             task_id = self._state.get("task_id") or uuid.uuid4().hex
             self._save(task_id=task_id, request_id=request_id, status="running", current_step="resolving_trade_date", attempts=1)
@@ -91,7 +127,14 @@ class SectorRefreshService:
                 try:
                     with self._lock:
                         self._save(status="running", current_step=f"validating_{trade_date}", data_date=trade_date)
-                    snapshot, members = self.builder(trade_date)
+                    current = self.store.load_current()
+                    reusable_members = None
+                    if current and current.get("as_of") == trade_date:
+                        reusable_members = self.store.load_all_members(str(current.get("snapshot_id") or ""))
+                    if self.builder is astock.build_verified_sector_snapshot:
+                        snapshot, members = self.builder(trade_date, reusable_members=reusable_members)
+                    else:
+                        snapshot, members = self.builder(trade_date)
                     kinds = {row.get("kind") for row in snapshot.get("sectors", [])}
                     if not {"行业", "概念"}.issubset(kinds):
                         raise RuntimeError("daily snapshot does not contain validated industry and concept data")
@@ -111,3 +154,5 @@ class SectorRefreshService:
                     status="failed", current_step="failed", ended_at=_now(),
                     error_type=type(exc).__name__, error_detail=str(exc)[:500],
                 )
+        finally:
+            self.store.release_refresh_lock(refresh_lock)

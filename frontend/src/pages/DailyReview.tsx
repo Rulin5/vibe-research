@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Sparkles, Loader2, AlertCircle, RefreshCw, Gauge, ArrowDownUp, TrendingUp, TrendingDown, Plus, X, Flame, BarChart3, Globe } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -35,6 +35,11 @@ function aShareSessionState(now = new Date()) {
   return "已收盘";
 }
 
+function sameTradeDate(left: string | null | undefined, right: string | null | undefined) {
+  const normalize = (value: string | null | undefined) => (value || "").match(/^\d{4}-\d{2}-\d{2}/)?.[0] || "";
+  return Boolean(normalize(left) && normalize(left) === normalize(right));
+}
+
 export function DailyReview() {
   const [indices, setIndices] = useState<IndexQuote[]>([]);
   const [idxErr, setIdxErr] = useState(false);
@@ -51,7 +56,6 @@ export function DailyReview() {
   const [selectedGlobalIndex, setSelectedGlobalIndex] = useState(GLOBAL_INDEX_SYMBOLS[1]);
   const [klineLoading, setKlineLoading] = useState(true);
   const [klineError, setKlineError] = useState<string | null>(null);
-  const sessionRef = useRef<IndexSeries["market_session"] | undefined>(undefined);
   const { items: watchItems, codes: watchCodes, refresh: refreshWatchlist } = useWatchlist();
   const [watchQuotes, setWatchQuotes] = useState<Record<string, Quote>>({});
   const [watchInput, setWatchInput] = useState("");
@@ -73,7 +77,7 @@ export function DailyReview() {
 
   const loadIndexCandles = () => {
     setKlineLoading(true);
-    api.indexCandles([...A_INDEX_SYMBOLS, ...GLOBAL_INDEX_SYMBOLS], 60)
+    api.indexCandles([...A_INDEX_SYMBOLS, ...GLOBAL_INDEX_SYMBOLS], 1)
       .then((rows) => { setIndexSeries(rows); setKlineError(null); })
       .catch((cause) => setKlineError(cause instanceof ApiError ? cause.message : "指数K线加载失败"))
       .finally(() => setKlineLoading(false));
@@ -96,15 +100,18 @@ export function DailyReview() {
 
   useEffect(() => {
     const tick = () => {
-      if (document.visibilityState === "visible" && aShareSessionState() === "盘中" && sessionRef.current !== "closed_day") loadIndexCandles();
+      const hasOpenMarket = indexSeries.some((row) => row.market_session === "trading");
+      const cnMarketClosedDay = indexSeries.filter((row) => row.market === "CN").every((row) => row.market_session === "closed_day");
+      if (document.visibilityState === "visible" && (aShareSessionState() === "盘中" || hasOpenMarket) && (!cnMarketClosedDay || hasOpenMarket)) {
+        loadIndices();
+        loadIndexCandles();
+      }
     };
     const timer = window.setInterval(tick, 30_000);
     const visible = () => { if (document.visibilityState === "visible") tick(); };
     document.addEventListener("visibilitychange", visible);
     return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
-  }, []);
-
-  useEffect(() => { sessionRef.current = indexSeries.find((row) => row.market === "CN")?.market_session; }, [indexSeries]);
+  }, [indexSeries]);
 
   useEffect(() => { refreshWatch(watchCodes); }, [watchCodes]);
 
@@ -154,6 +161,7 @@ export function DailyReview() {
   const sectors = overview?.sectors || [];
   const activeASeries = indexSeries.find((row) => row.symbol === selectedAIndex);
   const activeGlobalSeries = indexSeries.find((row) => row.symbol === selectedGlobalIndex);
+  const alignedEmotion = sentiment && sameTradeDate(sentiment.date, emotion?.date) ? emotion : null;
   const sessionLabel = ({ pre_open: "盘前", trading: "盘中", lunch_break: "午间休市", closed: "已收盘", closed_day: "非交易日", local_market: "" } as const)[activeASeries?.market_session || "local_market"] || aShareSessionState();
   return (
     <div>
@@ -178,7 +186,7 @@ export function DailyReview() {
         <div className="flex flex-wrap gap-2 border-b border-border/60 px-4 py-3">
           {indexSeries.filter((row) => row.market === "CN").map((row) => <button key={row.symbol} onClick={() => setSelectedAIndex(row.symbol)} className={cn("rounded-lg px-3 py-1.5 text-xs transition-colors", selectedAIndex === row.symbol ? "bg-primary/15 font-semibold text-primary" : "bg-muted/35 text-muted-foreground hover:text-foreground")}>{row.name}</button>)}
         </div>
-        {activeASeries ? <><div className="flex flex-wrap items-baseline gap-3 px-5 pt-4"><strong className="text-base">{activeASeries.name}</strong><span className="text-xs text-muted-foreground">截至 {activeASeries.as_of} · {activeASeries.source}</span></div><MarketKlineChart series={activeASeries} /></> : <p className="py-20 text-center text-sm text-muted-foreground">{klineError || (idxErr ? "行情未接通" : "K线加载中…")}</p>}
+        {activeASeries ? <><div className="flex flex-wrap items-baseline gap-3 px-5 pt-4"><strong className="text-base">{activeASeries.name}</strong><span className="text-xs text-muted-foreground">截至 {activeASeries.as_of} · {activeASeries.source}</span>{activeASeries.data_status === "source_unavailable" && <span className="rounded-full bg-warning/10 px-2 py-0.5 text-[11px] text-warning">TeaJoin 尚未提供该交易日 K 线</span>}</div><MarketKlineChart series={activeASeries} /></> : <p className="py-20 text-center text-sm text-muted-foreground">{klineError || (idxErr ? "行情未接通" : "K线加载中…")}</p>}
       </GlassCard>
 
       {/* 1b. 全球市场（隔夜外围脸色：A 股常看美股 / 港股） */}
@@ -190,7 +198,7 @@ export function DailyReview() {
           </div>
           <GlassCard className="mb-6 overflow-hidden p-0">
             <div className="flex flex-wrap gap-2 border-b border-border/60 px-4 py-3">{indexSeries.filter((row) => row.market !== "CN").map((row) => <button key={row.symbol} onClick={() => setSelectedGlobalIndex(row.symbol)} className={cn("rounded-lg px-3 py-1.5 text-xs transition-colors", selectedGlobalIndex === row.symbol ? "bg-primary/15 font-semibold text-primary" : "bg-muted/35 text-muted-foreground hover:text-foreground")}>{row.name}</button>)}</div>
-            {activeGlobalSeries ? <><div className="flex flex-wrap items-baseline gap-3 px-5 pt-4"><strong className="text-base">{activeGlobalSeries.name}</strong><span className="text-xs text-muted-foreground">截至 {activeGlobalSeries.as_of} · {activeGlobalSeries.currency} · {activeGlobalSeries.timezone}</span></div><MarketKlineChart series={activeGlobalSeries} height={300} /></> : <p className="py-16 text-center text-sm text-muted-foreground">K线加载中…</p>}
+            {activeGlobalSeries ? <><div className="flex flex-wrap items-baseline gap-3 px-5 pt-4"><strong className="text-base">{activeGlobalSeries.name}</strong><span className="text-xs text-muted-foreground">截至 {activeGlobalSeries.as_of} · {activeGlobalSeries.currency} · {activeGlobalSeries.timezone}</span>{activeGlobalSeries.data_status === "source_unavailable" && <span className="rounded-full bg-warning/10 px-2 py-0.5 text-[11px] text-warning">TeaJoin 尚未提供该交易日 K 线</span>}</div><MarketKlineChart series={activeGlobalSeries} height={300} /></> : <p className="py-16 text-center text-sm text-muted-foreground">K线加载中…</p>}
           </GlassCard>
         </>
       )}
@@ -290,7 +298,7 @@ export function DailyReview() {
                 </div>
               ))}
             </div>
-            <div className="mt-5"><SentimentBarChart sentiment={sentiment} emotion={emotion} /></div>
+            <div className="mt-5"><SentimentBarChart sentiment={sentiment} emotion={alignedEmotion} /></div>
           </>
         )}
       </GlassCard>

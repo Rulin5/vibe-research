@@ -18,6 +18,7 @@ from db import get_session
 from models import User
 
 ORIGIN = "http://127.0.0.1:5900"
+_CHAT_CFG = {"baseURL": "https://example.com/v1", "apiKey": "k", "model": "m"}
 
 
 @pytest.fixture()
@@ -251,6 +252,40 @@ def test_market_degrades_without_akshare(monkeypatch):
     assert market._sectors() == []
 
 
+def test_market_sentiment_rejects_missing_core_counts(monkeypatch):
+    class Frame:
+        def iterrows(self):
+            return iter([(0, {"item": "上涨", "value": "100"})])
+
+    class Ak:
+        @staticmethod
+        def stock_market_activity_legu():
+            return Frame()
+
+    monkeypatch.setattr(astock, "_akshare", lambda: Ak())
+    assert market._sentiment() == {}
+
+
+def test_sector_flow_rejects_rows_with_missing_or_inconsistent_money_values(monkeypatch):
+    class Frame:
+        def sort_values(self, *args, **kwargs):
+            return self
+
+        def iterrows(self):
+            return iter([(0, {
+                "行业": "银行", "行业-涨跌幅": 0.3, "净额": 1.0,
+                "流入资金": 5.0, "流出资金": 3.0, "公司家数": 42,
+            })])
+
+    class Ak:
+        @staticmethod
+        def stock_fund_flow_industry(symbol):
+            return Frame()
+
+    monkeypatch.setattr(astock, "_akshare", lambda: Ak())
+    assert market._sectors() == []
+
+
 # ── 流式工具调用：非标网关不带 index 时按 id 归位、不串参数 ──────────
 
 def test_stream_tool_calls_without_index(monkeypatch):
@@ -281,6 +316,77 @@ def test_stream_tool_calls_without_index(monkeypatch):
     assert ("query_quote", {"codes": ["600519"]}) in executed  # 参数没被串坏
     assert ("query_news", {"code": "600519"}) in executed      # 两个调用各归各槽
     assert events[-1]["type"] == "done"
+
+
+def _tool_call(call_id, name="query_news", arguments='{"code":"600519"}', index=0):
+    return {"tool_calls": [{"index": index, "id": call_id, "function": {"name": name, "arguments": arguments}}]}
+
+
+def test_stream_emits_complete_tool_lifecycle(monkeypatch):
+    rounds = [[_tool_call("call_a")], [{"content": "答案"}]]
+    state = iter(rounds)
+    monkeypatch.setattr(chat, "_call_llm_stream", lambda *args, **kwargs: None)
+    monkeypatch.setattr(chat, "_iter_sse_deltas", lambda _resp: iter(next(state)))
+    monkeypatch.setattr(chat, "_exec_tool", lambda name, args: {"ok": True})
+
+    events = list(chat.run_chat_stream(_CHAT_CFG, [{"role": "user", "content": "q"}]))
+    assert [event["type"] for event in events if event["type"].startswith("tool_")] == ["tool_started", "tool_completed"]
+    assert events[0]["call_id"] == "call_a"
+    assert "label" in events[0]
+
+
+def test_stream_emits_sanitized_tool_failure(monkeypatch):
+    rounds = [[_tool_call("call_a")], [{"content": "无法读取"}]]
+    state = iter(rounds)
+    monkeypatch.setattr(chat, "_call_llm_stream", lambda *args, **kwargs: None)
+    monkeypatch.setattr(chat, "_iter_sse_deltas", lambda _resp: iter(next(state)))
+    monkeypatch.setattr(chat, "_exec_tool", lambda name, args: {"error": "secret upstream URL / key"})
+
+    events = list(chat.run_chat_stream(_CHAT_CFG, [{"role": "user", "content": "q"}]))
+    failed = next(event for event in events if event["type"] == "tool_failed")
+    assert failed["error_code"] == "tool_execution_failed"
+    assert "secret" not in str(failed)
+
+
+def test_stream_enforces_per_round_and_duplicate_tool_budgets(monkeypatch):
+    calls = [_tool_call(f"call_{i}", index=i) for i in range(chat.MAX_TOOL_CALLS_PER_ROUND + 2)]
+    duplicate = _tool_call("duplicate", index=chat.MAX_TOOL_CALLS_PER_ROUND + 2)
+    rounds = [[*calls, duplicate], [{"content": "答案"}]]
+    state = iter(rounds)
+    monkeypatch.setattr(chat, "_call_llm_stream", lambda *args, **kwargs: None)
+    monkeypatch.setattr(chat, "_iter_sse_deltas", lambda _resp: iter(next(state)))
+    executed = []
+    monkeypatch.setattr(chat, "_exec_tool", lambda name, args: (executed.append((name, args)), {"ok": True})[1])
+
+    list(chat.run_chat_stream(_CHAT_CFG, [{"role": "user", "content": "q"}]))
+    assert len(executed) <= chat.MAX_TOOL_CALLS_PER_ROUND
+    assert executed.count(("query_news", {"code": "600519"})) <= chat.MAX_DUPLICATE_SIGNATURE
+
+
+def test_stream_enforces_total_tool_result_budget(monkeypatch):
+    rounds = [[_tool_call("call_a")], [{"content": "答案"}]]
+    state = iter(rounds)
+    monkeypatch.setattr(chat, "MAX_TOTAL_TOOL_RESULT_CHARS", 10)
+    monkeypatch.setattr(chat, "_call_llm_stream", lambda *args, **kwargs: None)
+    monkeypatch.setattr(chat, "_iter_sse_deltas", lambda _resp: iter(next(state)))
+    monkeypatch.setattr(chat, "_exec_tool", lambda name, args: {"payload": "x" * 100})
+
+    events = list(chat.run_chat_stream(_CHAT_CFG, [{"role": "user", "content": "q"}]))
+    failed = next(event for event in events if event["type"] == "tool_failed")
+    assert failed["error_code"] == "tool_result_budget_exhausted"
+
+
+def test_stream_stops_executing_tools_after_result_budget_is_exhausted(monkeypatch):
+    rounds = [[_tool_call("call_a", index=0), _tool_call("call_b", name="query_quote", arguments='{"codes":["600519"]}', index=1)], [{"content": "答案"}]]
+    state = iter(rounds)
+    monkeypatch.setattr(chat, "MAX_TOTAL_TOOL_RESULT_CHARS", 10)
+    monkeypatch.setattr(chat, "_call_llm_stream", lambda *args, **kwargs: None)
+    monkeypatch.setattr(chat, "_iter_sse_deltas", lambda _resp: iter(next(state)))
+    executed = []
+    monkeypatch.setattr(chat, "_exec_tool", lambda name, args: (executed.append(name), {"payload": "x" * 100})[1])
+
+    list(chat.run_chat_stream(_CHAT_CFG, [{"role": "user", "content": "q"}]))
+    assert executed == ["query_news"]
 
 
 # ── CLI 流式：子进程挂起时超时真正生效（不再无限期阻塞） ────────────

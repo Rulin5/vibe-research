@@ -32,10 +32,11 @@ _INSTRUMENTS: dict[str, dict[str, str]] = {
 }
 
 _FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount"
-_CACHE: dict[tuple[str, int], tuple[float, dict[str, Any]]] = {}
+_CACHE: dict[tuple[str, int, str], tuple[float, dict[str, Any]]] = {}
 _CACHE_LOCK = threading.Lock()
 _HISTORY_TTL_S = 900
 _SESSION_CACHE: dict[str, tuple[float, bool]] = {}
+
 
 
 def _utc_now() -> datetime:
@@ -60,6 +61,27 @@ def _cn_market_session() -> str:
             _SESSION_CACHE.clear()
             _SESSION_CACHE[local_date] = (monotonic_now, is_open)
     return a_share_session(now, is_open_day=is_open)["state"]
+
+
+def _global_market_session(instrument: dict[str, str], at: datetime) -> str:
+    """Exchange-local session state for the indices shown as global context."""
+    local = at.astimezone(ZoneInfo(instrument["timezone"]))
+    if local.weekday() >= 5:
+        return "closed_day"
+    current = local.time()
+    if instrument["market"] == "US":
+        if current < clock_time(9, 30):
+            return "pre_open"
+        return "trading" if current <= clock_time(16, 0) else "closed"
+    # HKEX continuous session. Public quote timestamps remain the authority on
+    # whether a same-day quote can be overlaid; this only controls refresh.
+    if current < clock_time(9, 30):
+        return "pre_open"
+    if current <= clock_time(12, 0):
+        return "trading"
+    if current < clock_time(13, 0):
+        return "lunch_break"
+    return "trading" if current <= clock_time(16, 0) else "closed"
 
 
 def _number(value: Any, field: str) -> float:
@@ -100,7 +122,9 @@ def _normalize_row(row: dict[str, Any]) -> dict[str, Any]:
         "change": _optional_number(row.get("change")),
         "pct_chg": _optional_number(row.get("pct_chg")),
         "volume": _optional_number(row.get("vol")),
-        "amount": _optional_number(row.get("amount")),
+        # TeaJoin/Tushare index_daily reports amount in thousand CNY; the
+        # front-end contract is always CNY, matching live quote amounts.
+        "amount": (_optional_number(row.get("amount")) * 1_000) if _optional_number(row.get("amount")) is not None else None,
         "is_partial": False,
     }
 
@@ -126,16 +150,27 @@ def _date_range(limit: int) -> tuple[str, str]:
     return (today - timedelta(days=max(limit * 2, 120))).strftime("%Y%m%d"), today.strftime("%Y%m%d")
 
 
+def _series_status(candles: list[dict[str, Any]], local_today: str) -> tuple[str, str | None]:
+    if not candles:
+        return "source_unavailable", "no_teajoin_candle"
+    if candles[-1]["trade_date"] == local_today:
+        return "fresh", None
+    return "historical", "previous_trade_day"
+
+
 def get_index_series(symbol: str, period: str = "1d", limit: int = 60, *, use_cache: bool = True) -> dict[str, Any]:
     if period != "1d":
         raise ValueError("only period=1d is supported")
     instrument = _INSTRUMENTS.get(symbol)
     if instrument is None:
         raise UnknownIndex(symbol)
-    key = (symbol, limit)
     now = time.monotonic()
-    session = _cn_market_session() if instrument["market"] == "CN" else "local_market"
-    cache_ttl = 25 if session == "trading" else _HISTORY_TTL_S
+    now_at = _utc_now()
+    session = _cn_market_session() if instrument["market"] == "CN" else _global_market_session(instrument, now_at)
+    # Keep cache entries scoped to the exchange session. In particular, an
+    # intraday snapshot must never be reused after the closing boundary.
+    key = (symbol, limit, session)
+    cache_ttl = _HISTORY_TTL_S
     if use_cache:
         with _CACHE_LOCK:
             hit = _CACHE.get(key)
@@ -150,16 +185,23 @@ def get_index_series(symbol: str, period: str = "1d", limit: int = 60, *, use_ca
     dates = [row["trade_date"] for row in candles]
     if len(dates) != len(set(dates)):
         raise InvalidIndexData("duplicate trade_date")
-    candles = candles[-limit:]
-    retrieved_at = _utc_now().isoformat()
+    candles = candles[-1:]
+    local_today = now_at.astimezone(ZoneInfo(instrument["timezone"])).date().isoformat()
+    data_status, status_reason = _series_status(candles, local_today)
+    retrieved_at = now_at.isoformat()
     result = {
         "symbol": symbol, **instrument,
-        "frequency": "1d", "adjustment": "none", "source": "TeaJoin",
+        "frequency": "1d", "adjustment": "none",
+        "volume_unit": None, "amount_unit": instrument["currency"],
+        "source": "TeaJoin",
+        "source_api": instrument["source_api"],
         "retrieved_at": retrieved_at,
         "as_of": candles[-1]["trade_date"] if candles else None,
-        "data_status": "fresh" if candles else "no_data",
+        "data_status": data_status,
         "market_session": session,
         "realtime_available": False,
+        "quote_at": None,
+        "status_reason": status_reason,
         "candles": candles,
     }
     if candles and use_cache:

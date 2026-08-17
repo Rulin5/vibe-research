@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { createBrowserRouter, Navigate } from "react-router-dom";
+import { createBrowserRouter, Navigate, useLocation } from "react-router-dom";
 import { Layout } from "@/components/layout/Layout";
 import { DailyReview } from "@/pages/DailyReview";
 import { Intel } from "@/pages/Intel";
@@ -7,6 +7,8 @@ import { Sectors } from "@/pages/Sectors";
 import { SectorDetail } from "@/pages/SectorDetail";
 import { Debate } from "@/pages/Debate";
 import { StockData } from "@/pages/StockData";
+import { AIResearch } from "@/pages/AIResearch";
+import { AIResearchLayout } from "@/pages/AIResearchLayout";
 import { MyFocus } from "@/pages/MyFocus";
 import { Watchlist } from "@/pages/Watchlist";
 import { Portfolio } from "@/pages/Portfolio";
@@ -18,6 +20,11 @@ import { Register } from "@/pages/Register";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 
 const AssetAllocation = lazy(() => import("@/pages/AssetAllocation"));
+
+function LegacyDebateRedirect() {
+  const { search } = useLocation();
+  return <Navigate to={`/ai-research/debate${search}`} replace />;
+}
 
 export const router = createBrowserRouter([
   { path: "/login", element: <Login /> },
@@ -31,7 +38,16 @@ export const router = createBrowserRouter([
       { path: "/sectors", element: <Sectors /> },
       { path: "/sectors/:kind/:code", element: <SectorDetail /> },
       { path: "/stock-data", element: <StockData /> },
-      { path: "/debate", element: <Debate /> },
+      {
+        path: "/ai-research",
+        element: <AIResearchLayout />,
+        children: [
+          { index: true, element: <Navigate to="analysis" replace /> },
+          { path: "analysis", element: <AIResearch /> },
+          { path: "debate", element: <Debate /> },
+        ],
+      },
+      { path: "/debate", element: <LegacyDebateRedirect /> },
       { path: "/asset-allocation", element: <Suspense fallback={null}><AssetAllocation /></Suspense> },
       { path: "/settings", element: <RequireAuth><Settings /></RequireAuth> },
 

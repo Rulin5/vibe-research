@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { Link, Outlet, useLocation } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   Activity, Bookmark, ChevronsLeft, ChevronsRight, CloudMoon, Landmark, LayoutGrid,
-  MoonStar, Radar, Search, Settings, Sun, Swords, type LucideIcon,
+  BotMessageSquare, CircleUser, LogOut, MoonStar, Radar, Search, Settings, Sun, type LucideIcon,
 } from "lucide-react";
 import { Toaster } from "sonner";
 
@@ -10,13 +10,14 @@ import { BrandLogo } from "@/components/common/BrandLogo";
 import { type ThemeName, useDarkMode } from "@/hooks/useDarkMode";
 import { storageGet, storageSet } from "@/lib/storage";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/components/auth/AuthProvider";
 
 const NAV = [
   { to: "/daily-review", icon: Activity, label: "每日复盘" },
   { to: "/intel", icon: Radar, label: "资讯雷达" },
   { to: "/sectors", icon: LayoutGrid, label: "板块中心" },
   { to: "/stock-data", icon: Search, label: "个股数据" },
-  { to: "/debate", icon: Swords, label: "AI 对话" },
+  { to: "/ai-research/analysis", icon: BotMessageSquare, label: "AI研究" },
   { to: "/asset-allocation", icon: Landmark, label: "资产配置" },
   { to: "/watch", icon: Bookmark, label: "我的关注" },
   { to: "/settings", icon: Settings, label: "接入 AI" },
@@ -30,6 +31,8 @@ const THEME_OPTIONS: Array<{ value: ThemeName; label: string; icon: LucideIcon }
 
 export function Layout() {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
   const { theme, setTheme, isDark } = useDarkMode();
   const [collapsed, setCollapsed] = useState(() => storageGet("vr-sidebar") === "collapsed");
 
@@ -53,7 +56,9 @@ export function Layout() {
 
         <nav className={cn("flex-1 space-y-1 overflow-auto", collapsed ? "p-1.5" : "p-2.5")}>
           {NAV.map(({ to, icon: Icon, label }) => {
-            const active = to === "/watch" ? pathname.startsWith("/watch") : pathname === to;
+            const active = to === "/watch"
+              ? pathname.startsWith("/watch")
+              : to.startsWith("/ai-research") ? pathname.startsWith("/ai-research") : pathname === to;
             return (
               <div key={to}>
                 <Link
@@ -76,6 +81,16 @@ export function Layout() {
         </nav>
 
         <div className={cn("border-t border-border/50", collapsed ? "flex flex-col items-center gap-2 p-2" : "space-y-2 p-3")}>
+          <div className={cn("rounded-lg bg-muted/45", collapsed ? "p-1.5" : "p-2")}>
+            <div className={cn("flex items-center", collapsed ? "justify-center" : "gap-2")} title={user?.username || "当前账号"}>
+              <CircleUser className="h-4 w-4 shrink-0 text-muted-foreground" />
+              {!collapsed && <span className="min-w-0 flex-1 truncate text-xs font-medium">{user?.username || "当前账号"}</span>}
+            </div>
+            <button type="button" onClick={() => { void logout().finally(() => navigate("/login", { replace: true })); }} title="切换账号" className={cn("mt-1 flex items-center rounded-md text-xs text-muted-foreground hover:bg-background hover:text-foreground", collapsed ? "h-8 w-8 justify-center" : "w-full gap-1.5 px-2 py-1.5")}>
+              <LogOut className="h-3.5 w-3.5" />
+              {!collapsed && <span>切换账号</span>}
+            </button>
+          </div>
           <div className={cn("flex rounded-lg bg-muted/45 p-1", collapsed ? "flex-col gap-1" : "w-full")}>
             {THEME_OPTIONS.map(({ value, label, icon: Icon }) => (
               <button
